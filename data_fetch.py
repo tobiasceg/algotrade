@@ -82,6 +82,19 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     high_20d = prior["High"].tail(config.BREAKOUT_LOOKBACK).max()
     avg_vol_20d = prior["Volume"].tail(config.VOLUME_LOOKBACK).mean()
 
+    # True range = max(high-low, |high-prev close|, |low-prev close|);
+    # ATR is its simple average. Used to size stops to each name's volatility.
+    prev_close = df["Close"].shift(1)
+    true_range = pd.concat(
+        [
+            df["High"] - df["Low"],
+            (df["High"] - prev_close).abs(),
+            (df["Low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = true_range.tail(config.ATR_LOOKBACK).mean()
+
     return {
         "date": df.index[-1].date().isoformat(),
         "close": round(float(signal["Close"]), 2),
@@ -93,6 +106,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "vol_ratio": round(float(signal["Volume"] / avg_vol_20d), 2),
         "ma20": round(float(df["Close"].tail(20).mean()), 2),
         "ma50": round(float(df["Close"].tail(50).mean()), 2),
+        "atr14": round(float(atr), 2),
         "pct_above_high_20d": round(
             float((signal["Close"] / high_20d - 1) * 100), 2
         ),

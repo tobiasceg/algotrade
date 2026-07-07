@@ -80,13 +80,17 @@ def run_entry(now_et: datetime) -> None:
 
     # Step 2: assemble the daily data snapshot
     import data_fetch
+    import rules
 
     snapshot = data_fetch.build_snapshot()
     path = data_fetch.save_snapshot(snapshot)
     print(data_fetch.summarize(snapshot))
     print(f"[entry] snapshot written to {path}")
 
-    # Step 3: candidates = rules_engine(snapshot)
+    # Step 3: deterministic entry rules propose candidates (often none)
+    candidates = rules.generate_candidates(snapshot)
+    print(rules.explain(candidates))
+
     # Step 4: approved = claude_veto(candidates, snapshot)
     # Step 5: approved = apply_guardrails(approved, portfolio)
     # Step 6: place_bracket_orders(approved); notify_telegram(...); log(...)

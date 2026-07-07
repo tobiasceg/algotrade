@@ -29,7 +29,16 @@ BENCHMARK = "QQQ"
 BREAKOUT_LOOKBACK = 20   # "closed above the 20-day high"
 VOLUME_LOOKBACK = 20     # volume vs 20-day average
 TREND_MA = 50            # benchmark trend filter
+ATR_LOOKBACK = 14        # average true range, for stops/targets
 HISTORY_PERIOD = "6mo"   # how much daily history to download
+
+# Entry rules (step 3)
+VOL_SURGE_MIN = 1.5          # breakout volume must be >= this x 20-day average
+MAX_BREAKOUT_EXT_PCT = 5.0   # skip if close is more than this % above the
+                             # 20-day high — a huge gap has already spent the
+                             # move, and chasing it wrecks the reward:risk
+STOP_ATR_MULT = 2.0          # stop  = close - 2.0 * ATR
+TARGET_ATR_MULT = 3.0        # target = close + 3.0 * ATR  (1.5 reward:risk)
 
 # News: how far back headlines count as "fresh" for the veto layer
 NEWS_HOURS = 24
