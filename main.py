@@ -75,13 +75,18 @@ def guard(mode: str, now_et: datetime) -> tuple[bool, str]:
 
 
 def run_entry(now_et: datetime) -> None:
-    """Morning run: steps 2-6 of the pipeline plug in here."""
+    """Morning run: snapshot -> rules -> (veto, step 4 TBD) -> guardrails ->
+    bracket orders -> Telegram + journal."""
     print(f"[entry] {now_et:%Y-%m-%d %H:%M} ET — running entry pipeline")
 
-    # Step 2: assemble the daily data snapshot
+    import broker
     import data_fetch
+    import guardrails
+    import journal
+    import notify
     import rules
 
+    # Step 2: assemble the daily data snapshot
     snapshot = data_fetch.build_snapshot()
     path = data_fetch.save_snapshot(snapshot)
     print(data_fetch.summarize(snapshot))
@@ -91,18 +96,102 @@ def run_entry(now_et: datetime) -> None:
     candidates = rules.generate_candidates(snapshot)
     print(rules.explain(candidates))
 
-    # Step 4: approved = claude_veto(candidates, snapshot)
-    # Step 5: approved = apply_guardrails(approved, portfolio)
-    # Step 6: place_bracket_orders(approved); notify_telegram(...); log(...)
+    # Step 4 (not built yet): Claude veto — may only shrink this list.
+
+    # Step 5: hard guardrails size and cap whatever survived
+    tc = broker.client()
+    dry_run = tc is None
+    account = dict(broker.SIM_ACCOUNT) if dry_run else broker.account_state(tc)
+    approved, rejected = guardrails.apply(candidates, account)
+
+    # Step 6: execution — bracket orders so exits exist from birth
+    placed = []
+    for order in approved:
+        record = {
+            "symbol": order["symbol"],
+            "qty": order["qty"],
+            "limit_price": order["limit_price"],
+            "stop": order["stop"],
+            "target": order["target"],
+            "signal_date": order["signal_date"],
+        }
+        if dry_run:
+            journal.log("order_dry_run", **record)
+            placed.append(order)
+            print(f"[entry] DRY RUN — would submit: {record}")
+        else:
+            try:
+                order_id = broker.submit_bracket(tc, order)
+                journal.log("order_submitted", order_id=order_id, **record)
+                placed.append(order)
+            except Exception as exc:  # noqa: BLE001 — a failed order is a missed trade, not a crash
+                journal.log("order_error", symbol=order["symbol"], error=str(exc))
+                rejected.append({"symbol": order["symbol"], "reason": f"submit failed: {exc}"})
+
+    journal.log(
+        "entry_run",
+        date=snapshot["date"],
+        dry_run=dry_run,
+        market=snapshot["market"],
+        macro_events=snapshot["macro_events"],
+        candidates=[c["symbol"] for c in candidates],
+        placed=[o["symbol"] for o in placed],
+        rejected=rejected,
+    )
+    notify.send(compose_entry_message(snapshot, candidates, placed, rejected, account, dry_run))
+
+
+def compose_entry_message(snapshot, candidates, placed, rejected, account, dry_run) -> str:
+    m = snapshot["market"]
+    lines = [f"[BOT] entry run {snapshot['date']}" + (" (DRY RUN)" if dry_run else "")]
+    if m:
+        trend = "above" if m["above_trend"] else "BELOW"
+        lines.append(f"{m['benchmark']} {m['close']}, {trend} 50d MA ({m['ma50']})")
+    for e in snapshot["macro_events"]:
+        lines.append(f"macro: {e['event']} in {e['days_away']}d")
+    if not candidates:
+        lines.append("no setups today")
+    for o in placed:
+        lines.append(
+            f"BUY {o['qty']} {o['symbol']} @ <={o['limit_price']} "
+            f"| stop {o['stop']} | target {o['target']} ({o['reason']})"
+        )
+    for r in rejected:
+        lines.append(f"skipped {r['symbol']}: {r['reason']}")
+    lines.append(
+        f"portfolio: equity {account['equity']:,.0f} | cash {account['cash']:,.0f} "
+        f"| {len(account['positions'])} position(s)"
+    )
+    return "\n".join(lines)
 
 
 def run_exit(now_et: datetime) -> None:
     """Pre-close run: purely mechanical, no AI. Bracket orders already carry
-    stop and target, so this run only handles time-based exits (e.g. close
-    positions older than N days) and sanity-checks that every open position
-    still has a protective stop attached."""
+    stop and target, so this run only enforces the time stop and audits that
+    every open position still has a protective stop attached."""
     print(f"[exit] {now_et:%Y-%m-%d %H:%M} ET — running exit checks")
-    print("[exit] pipeline stubs — nothing to do yet")
+
+    import broker
+    import journal
+    import notify
+
+    tc = broker.client()
+    if tc is None:
+        print("[exit] DRY RUN — no broker, nothing to check")
+        journal.log("exit_run", dry_run=True, actions=[])
+        return
+
+    actions = broker.exit_checks(tc, now_et)
+    for a in actions:
+        print(f"[exit] {a}")
+    account = broker.account_state(tc)
+    journal.log("exit_run", dry_run=False, actions=actions)
+    notify.send(
+        f"[BOT] exit run {now_et:%Y-%m-%d}\n"
+        + "\n".join(actions)
+        + f"\nportfolio: equity {account['equity']:,.0f} | cash {account['cash']:,.0f} "
+        f"| {len(account['positions'])} position(s)"
+    )
 
 
 def main() -> int:

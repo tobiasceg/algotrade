@@ -40,6 +40,18 @@ MAX_BREAKOUT_EXT_PCT = 5.0   # skip if close is more than this % above the
 STOP_ATR_MULT = 2.0          # stop  = close - 2.0 * ATR
 TARGET_ATR_MULT = 3.0        # target = close + 3.0 * ATR  (1.5 reward:risk)
 
+# Hard guardrails (step 5) — enforced by code AFTER any AI approval
+MAX_POSITION_PCT = 0.10      # max fraction of equity in one position
+MAX_NEW_TRADES_PER_DAY = 2   # new entries per day, across all runs
+CASH_FLOOR_PCT = 0.20        # never let cash drop below this fraction of equity
+MAX_ENTRY_SLIP_PCT = 2.0     # entry is a DAY limit this % above signal close;
+                             # if the stock gaps past it, the order simply
+                             # never fills — free protection against chasing
+
+# Exit management (step 6, pre-close run — fully mechanical)
+MAX_HOLD_DAYS = 5            # time stop, in trading days; momentum trades
+                             # that go nowhere get closed, not babysat
+
 # News: how far back headlines count as "fresh" for the veto layer
 NEWS_HOURS = 24
 

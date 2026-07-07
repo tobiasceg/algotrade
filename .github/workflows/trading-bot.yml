@@ -30,6 +30,10 @@ on:
         type: boolean
         default: false
 
+# Needed so the workflow can commit the decision journal back to the repo.
+permissions:
+  contents: write
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -62,6 +66,7 @@ jobs:
           fi
 
       - name: Run bot
+        id: bot
         run: python main.py --mode ${{ steps.mode.outputs.mode }} ${{ steps.mode.outputs.force }}
         env:
           # Add these under repo Settings -> Secrets and variables -> Actions
@@ -71,3 +76,28 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      # The journal is the experiment's memory — commit it back so it survives
+      # the ephemeral runner. Daily commits also keep GitHub's 60-day
+      # inactivity rule from disabling the schedule.
+      - name: Persist journal
+        if: always()
+        run: |
+          git config user.name "trading-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add journal.jsonl
+          if ! git diff --cached --quiet; then
+            git commit -m "journal: ${{ steps.mode.outputs.mode }} run $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase origin main
+            git push
+          fi
+
+      # Snapshots are too bulky for the repo; keep 90 days as artifacts.
+      - name: Upload snapshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-${{ github.run_id }}
+          path: snapshots/
+          if-no-files-found: ignore
+          retention-days: 90

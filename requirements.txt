@@ -1,3 +1,5 @@
 pandas-market-calendars>=4.4
 pandas>=2.0
 yfinance>=0.2.50
+alpaca-py>=0.30
+requests>=2.31
