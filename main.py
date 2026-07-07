@@ -77,12 +77,19 @@ def guard(mode: str, now_et: datetime) -> tuple[bool, str]:
 def run_entry(now_et: datetime) -> None:
     """Morning run: steps 2-6 of the pipeline plug in here."""
     print(f"[entry] {now_et:%Y-%m-%d %H:%M} ET — running entry pipeline")
-    # Step 2: snapshot = fetch_data(WATCHLIST)
+
+    # Step 2: assemble the daily data snapshot
+    import data_fetch
+
+    snapshot = data_fetch.build_snapshot()
+    path = data_fetch.save_snapshot(snapshot)
+    print(data_fetch.summarize(snapshot))
+    print(f"[entry] snapshot written to {path}")
+
     # Step 3: candidates = rules_engine(snapshot)
     # Step 4: approved = claude_veto(candidates, snapshot)
     # Step 5: approved = apply_guardrails(approved, portfolio)
     # Step 6: place_bracket_orders(approved); notify_telegram(...); log(...)
-    print("[entry] pipeline stubs — nothing to do yet")
 
 
 def run_exit(now_et: datetime) -> None:

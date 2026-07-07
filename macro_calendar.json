@@ -1,0 +1,25 @@
+{
+  "_comment": "Scheduled macro binary events for 2026. FOMC dates are the rate-decision day (day 2 of each meeting), verified against federalreserve.gov/monetarypolicy/fomccalendars.htm. CPI dates are BLS release days (8:30am ET). Refresh this file each January when the next year's schedules are published.",
+  "events": [
+    { "date": "2026-01-13", "event": "CPI release (Dec 2025)" },
+    { "date": "2026-01-28", "event": "FOMC rate decision" },
+    { "date": "2026-02-11", "event": "CPI release (Jan)" },
+    { "date": "2026-03-11", "event": "CPI release (Feb)" },
+    { "date": "2026-03-18", "event": "FOMC rate decision" },
+    { "date": "2026-04-10", "event": "CPI release (Mar)" },
+    { "date": "2026-04-29", "event": "FOMC rate decision" },
+    { "date": "2026-05-12", "event": "CPI release (Apr)" },
+    { "date": "2026-06-10", "event": "CPI release (May)" },
+    { "date": "2026-06-17", "event": "FOMC rate decision" },
+    { "date": "2026-07-14", "event": "CPI release (Jun)" },
+    { "date": "2026-07-29", "event": "FOMC rate decision" },
+    { "date": "2026-08-12", "event": "CPI release (Jul)" },
+    { "date": "2026-09-11", "event": "CPI release (Aug)" },
+    { "date": "2026-09-16", "event": "FOMC rate decision" },
+    { "date": "2026-10-14", "event": "CPI release (Sep)" },
+    { "date": "2026-10-28", "event": "FOMC rate decision" },
+    { "date": "2026-11-10", "event": "CPI release (Oct)" },
+    { "date": "2026-12-09", "event": "FOMC rate decision" },
+    { "date": "2026-12-10", "event": "CPI release (Nov)" }
+  ]
+}
