@@ -1,0 +1,1 @@
+pandas-market-calendars>=4.4
