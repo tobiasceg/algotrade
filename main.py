@@ -19,13 +19,19 @@ import pandas_market_calendars as mcal
 
 ET = ZoneInfo("America/New_York")
 
-# The entry cron is aimed at 10:00 ET. GitHub cron can fire a few minutes
-# late, so accept a window around the target rather than an exact time.
-ENTRY_WINDOW = (time(9, 45), time(10, 45))
+# The entry cron is aimed at 10:00 ET, but GitHub Actions cron routinely
+# fires 1-2+ hours late. The window is therefore generous: any firing that
+# lands before mid-afternoon still makes a valid entry decision (the DAY
+# limit order at signal_close * 1.02 means a late entry can never chase a
+# runaway price — it just doesn't fill). Duplicate firings inside the
+# window are handled by the journal dedupe, not by window narrowness.
+ENTRY_WINDOW = (time(9, 45), time(13, 30))
 
 # The exit run must land while the market is still open, so its window is
 # computed from the real close time (handles 13:00 half-day closes too).
-EXIT_LEAD = timedelta(minutes=45)
+# Wide for the same reason: the cron aims at 14:15 ET and may be hours
+# late; anything from EXIT_LEAD before the close until the close works.
+EXIT_LEAD = timedelta(hours=2, minutes=15)
 
 
 def market_hours_today(now_et: datetime):
@@ -52,6 +58,14 @@ def guard(mode: str, now_et: datetime) -> tuple[bool, str]:
     if hours is None:
         return False, "market closed today (weekend or NYSE holiday)"
     market_open, market_close = hours
+
+    # Dedupe: with generous windows, several of the day's cron firings can
+    # be valid — the first one to complete journals its run, the rest skip.
+    import journal
+
+    today = now_et.date().isoformat()
+    if journal.already_ran(f"{mode}_run", today):
+        return False, f"{mode} run already completed today (duplicate firing)"
 
     if mode == "entry":
         lo, hi = ENTRY_WINDOW
@@ -190,14 +204,14 @@ def run_exit(now_et: datetime) -> None:
     tc = broker.client()
     if tc is None:
         print("[exit] DRY RUN — no broker, nothing to check")
-        journal.log("exit_run", dry_run=True, actions=[])
+        journal.log("exit_run", date=now_et.date().isoformat(), dry_run=True, actions=[])
         return
 
     actions = broker.exit_checks(tc, now_et)
     for a in actions:
         print(f"[exit] {a}")
     account = broker.account_state(tc)
-    journal.log("exit_run", dry_run=False, actions=actions)
+    journal.log("exit_run", date=now_et.date().isoformat(), dry_run=False, actions=actions)
     notify.send(
         f"[BOT] exit run {now_et:%Y-%m-%d}\n"
         + "\n".join(actions)

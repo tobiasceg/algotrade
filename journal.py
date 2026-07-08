@@ -35,6 +35,22 @@ def entries() -> list[dict]:
     ]
 
 
+def already_ran(event: str, date_iso: str) -> bool:
+    """True if a real (non-dry-run) record of this event exists for this date.
+
+    This is the dedupe that lets the scheduler's time windows be generous:
+    with four cron firings a day and GitHub's unpredictable delays, several
+    firings can land inside a valid window — the first one to complete wins,
+    and the rest see its journal record and skip.
+    """
+    return any(
+        rec.get("event") == event
+        and rec.get("date") == date_iso
+        and not rec.get("dry_run", False)
+        for rec in entries()
+    )
+
+
 def last_order_for(symbol: str) -> dict | None:
     """Most recent entry order record for a symbol (used by the exit run to
     determine position age and the original stop price)."""

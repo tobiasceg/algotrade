@@ -2,11 +2,14 @@
 #
 # GitHub Actions cron only understands UTC and never adjusts for US daylight
 # saving time, so each run gets TWO cron lines — one for EDT (summer) and one
-# for EST (winter). Both fire year-round; the Python guard in main.py checks
-# the actual New York clock and lets exactly one of them through.
+# for EST (winter). On top of that, GitHub fires crons 1-2+ hours late in
+# practice, so the targets are set early, the Python guard in main.py accepts
+# a wide window, and a journal-based dedupe makes sure only the first firing
+# inside the window actually does work.
 #
-#   Entry run : 10:00 ET (~30 min after the 09:30 open)  = 10pm SGT in summer
-#   Exit run  : 15:30 ET (30 min before the 16:00 close) = 3:30am SGT in summer
+#   Entry run : aims 10:00 ET (~30 min after the open), valid until 13:30 ET
+#   Exit run  : aims 14:15 ET, valid until the close — must land while the
+#               market is open, hence the early target to absorb delays
 
 name: trading-bot
 
@@ -14,8 +17,8 @@ on:
   schedule:
     - cron: "0 14 * * 1-5"   # entry — 10:00 ET while EDT (UTC-4)
     - cron: "0 15 * * 1-5"   # entry — 10:00 ET while EST (UTC-5)
-    - cron: "30 19 * * 1-5"  # exit  — 15:30 ET while EDT
-    - cron: "30 20 * * 1-5"  # exit  — 15:30 ET while EST
+    - cron: "15 18 * * 1-5"  # exit  — 14:15 ET while EDT
+    - cron: "15 19 * * 1-5"  # exit  — 14:15 ET while EST
   # Manual trigger for testing from the GitHub UI (Actions tab -> Run workflow)
   workflow_dispatch:
     inputs:
@@ -33,6 +36,14 @@ on:
 # Needed so the workflow can commit the decision journal back to the repo.
 permissions:
   contents: write
+
+# Serialize runs: if two delayed cron firings arrive close together, the
+# second queues until the first finishes — by which time the first has
+# committed its journal record, so the second checks out that commit and
+# the dedupe in main.py skips it cleanly.
+concurrency:
+  group: trading-bot
+  cancel-in-progress: false
 
 jobs:
   run:
