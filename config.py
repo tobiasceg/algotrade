@@ -52,6 +52,12 @@ MAX_ENTRY_SLIP_PCT = 2.0     # entry is a DAY limit this % above signal close;
 MAX_HOLD_DAYS = 5            # time stop, in trading days; momentum trades
                              # that go nowhere get closed, not babysat
 
+# Claude veto layer (step 4)
+VETO_MODEL = "claude-opus-4-8"
+VETO_MAX_TOKENS = 512
+EARNINGS_VETO_DAYS = 2       # surfaced to the model as the rule of thumb:
+                             # earnings within this many trading days = veto
+
 # News: how far back headlines count as "fresh" for the veto layer
 NEWS_HOURS = 24
 

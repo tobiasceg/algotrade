@@ -85,6 +85,7 @@ def run_entry(now_et: datetime) -> None:
     import journal
     import notify
     import rules
+    import veto
 
     # Step 2: assemble the daily data snapshot
     snapshot = data_fetch.build_snapshot()
@@ -96,13 +97,14 @@ def run_entry(now_et: datetime) -> None:
     candidates = rules.generate_candidates(snapshot)
     print(rules.explain(candidates))
 
-    # Step 4 (not built yet): Claude veto — may only shrink this list.
+    # Step 4: Claude veto — may only shrink the list, never expand it
+    survivors, veto_decisions = veto.review(candidates, snapshot)
 
     # Step 5: hard guardrails size and cap whatever survived
     tc = broker.client()
     dry_run = tc is None
     account = dict(broker.SIM_ACCOUNT) if dry_run else broker.account_state(tc)
-    approved, rejected = guardrails.apply(candidates, account)
+    approved, rejected = guardrails.apply(survivors, account)
 
     # Step 6: execution — bracket orders so exits exist from birth
     placed = []
@@ -135,13 +137,18 @@ def run_entry(now_et: datetime) -> None:
         market=snapshot["market"],
         macro_events=snapshot["macro_events"],
         candidates=[c["symbol"] for c in candidates],
+        veto=veto_decisions,
         placed=[o["symbol"] for o in placed],
         rejected=rejected,
     )
-    notify.send(compose_entry_message(snapshot, candidates, placed, rejected, account, dry_run))
+    notify.send(
+        compose_entry_message(
+            snapshot, candidates, veto_decisions, placed, rejected, account, dry_run
+        )
+    )
 
 
-def compose_entry_message(snapshot, candidates, placed, rejected, account, dry_run) -> str:
+def compose_entry_message(snapshot, candidates, veto_decisions, placed, rejected, account, dry_run) -> str:
     m = snapshot["market"]
     lines = [f"[BOT] entry run {snapshot['date']}" + (" (DRY RUN)" if dry_run else "")]
     if m:
@@ -151,6 +158,11 @@ def compose_entry_message(snapshot, candidates, placed, rejected, account, dry_r
         lines.append(f"macro: {e['event']} in {e['days_away']}d")
     if not candidates:
         lines.append("no setups today")
+    for d in veto_decisions:
+        if d["decision"] == "VETO":
+            lines.append(f"VETOED {d['symbol']}: {d['reason']}")
+        elif d["decision"] == "SKIPPED":
+            lines.append(f"note: {d['reason']}")
     for o in placed:
         lines.append(
             f"BUY {o['qty']} {o['symbol']} @ <={o['limit_price']} "
