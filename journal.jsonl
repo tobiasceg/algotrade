@@ -1,2 +1,3 @@
 {"ts": "2026-07-07T10:13:58+00:00", "event": "entry_run", "date": "2026-07-07", "dry_run": true, "market": {"benchmark": "QQQ", "close": 722.82, "ma50": 709.88, "above_trend": true}, "macro_events": [{"date": "2026-07-14", "event": "CPI release (Jun)", "days_away": 7}], "candidates": [], "placed": [], "rejected": []}
 {"ts": "2026-07-07T10:13:59+00:00", "event": "exit_run", "dry_run": true, "actions": []}
+{"ts": "2026-07-08T07:33:53+00:00", "event": "entry_run", "date": "2026-07-08", "dry_run": false, "market": {"benchmark": "QQQ", "close": 709.43, "ma50": 711.06, "above_trend": false}, "macro_events": [{"date": "2026-07-14", "event": "CPI release (Jun)", "days_away": 6}], "candidates": [], "placed": [], "rejected": []}
