@@ -1,24 +1,27 @@
 # Scheduler for the trading bot (Step 1).
 #
-# GitHub Actions cron only understands UTC and never adjusts for US daylight
-# saving time, so each run gets TWO cron lines — one for EDT (summer) and one
-# for EST (winter). On top of that, GitHub fires crons 1-2+ hours late in
-# practice, so the targets are set early, the Python guard in main.py accepts
-# a wide window, and a journal-based dedupe makes sure only the first firing
-# inside the window actually does work.
+# GitHub Actions cron fires 1-2+ hours LATE in practice (it's a congested
+# queue, not a clock), and it only understands UTC (no US daylight-saving
+# awareness). The counter-strategy, in layers:
 #
-#   Entry run : aims 10:00 ET (~30 min after the open), valid until 13:30 ET
-#   Exit run  : aims 14:15 ET, valid until the close — must land while the
-#               market is open, hence the early target to absorb delays
+#   1. Crons AIM EARLY: main.py sleeps until the intended work time
+#      (entry 10:00 ET, exit 14:15 ET), so GitHub's queue lag eats into
+#      the sleep instead of delaying the actual work.
+#   2. Odd minutes (:07/:37) dodge the top-of-hour congestion spike.
+#   3. Each run gets multiple firings (DST twin + late backup); the first
+#      to complete journals the run, the rest skip via the dedupe.
+#   4. The guard's wide window is the last resort if every firing is late.
 
 name: trading-bot
 
 on:
   schedule:
-    - cron: "0 14 * * 1-5"   # entry — 10:00 ET while EDT (UTC-4)
-    - cron: "0 15 * * 1-5"   # entry — 10:00 ET while EST (UTC-5)
-    - cron: "15 18 * * 1-5"  # exit  — 14:15 ET while EDT
-    - cron: "15 19 * * 1-5"  # exit  — 14:15 ET while EST
+    - cron: "7 12 * * 1-5"   # entry — 8:07 ET in summer; sleeps to 10:00
+    - cron: "7 13 * * 1-5"   # entry — DST twin, doubles as first backup
+    - cron: "37 15 * * 1-5"  # entry — late backup, lands mid-window
+    - cron: "7 16 * * 1-5"   # exit  — 12:07 ET in summer; sleeps to 14:15
+    - cron: "7 17 * * 1-5"   # exit  — DST twin / backup
+    - cron: "7 19 * * 1-5"   # exit  — late backup, still before the close
   # Manual trigger for testing from the GitHub UI (Actions tab -> Run workflow)
   workflow_dispatch:
     inputs:
@@ -37,18 +40,20 @@ on:
 permissions:
   contents: write
 
-# Serialize runs: if two delayed cron firings arrive close together, the
-# second queues until the first finishes — by which time the first has
-# committed its journal record, so the second checks out that commit and
-# the dedupe in main.py skips it cleanly.
+# Serialize scheduled runs: firings queue behind each other, so by the time
+# a backup firing starts, the primary has committed its journal record and
+# the dedupe in main.py skips the backup cleanly. Manual runs get their own
+# group so they never queue behind a scheduled job that is mid-sleep.
 concurrency:
-  group: trading-bot
+  group: ${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || 'trading-bot' }}
   cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Generous: an early firing can spend up to ~3.5h asleep waiting for
+    # its target time. Idle runner time is free on a public repo.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
@@ -70,8 +75,8 @@ jobs:
             echo "force=${{ inputs.force && '--force' || '' }}" >> "$GITHUB_OUTPUT"
           else
             case "${{ github.event.schedule }}" in
-              "0 14 * * 1-5"|"0 15 * * 1-5") echo "mode=entry" >> "$GITHUB_OUTPUT" ;;
-              *)                             echo "mode=exit"  >> "$GITHUB_OUTPUT" ;;
+              "7 12 * * 1-5"|"7 13 * * 1-5"|"37 15 * * 1-5") echo "mode=entry" >> "$GITHUB_OUTPUT" ;;
+              *)                                             echo "mode=exit"  >> "$GITHUB_OUTPUT" ;;
             esac
             echo "force=" >> "$GITHUB_OUTPUT"
           fi

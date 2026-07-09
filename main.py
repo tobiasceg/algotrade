@@ -12,6 +12,7 @@ the off-season duplicate lands outside its time window and exits cleanly.
 
 import argparse
 import sys
+import time as time_mod
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -29,9 +30,34 @@ ENTRY_WINDOW = (time(9, 45), time(13, 30))
 
 # The exit run must land while the market is still open, so its window is
 # computed from the real close time (handles 13:00 half-day closes too).
-# Wide for the same reason: the cron aims at 14:15 ET and may be hours
-# late; anything from EXIT_LEAD before the close until the close works.
+# Wide for the same reason: the cron aims early and may be hours late;
+# anything from EXIT_LEAD before the close until the close works.
 EXIT_LEAD = timedelta(hours=2, minutes=15)
+
+# Beat GitHub's cron lag by aiming EARLY and sleeping to the target: the
+# crons fire hours before the intended work time, and whatever queue delay
+# GitHub adds simply eats into a harmless sleep instead of our punctuality.
+ENTRY_TARGET = time(10, 0)                  # work starts 10:00 ET sharp
+EXIT_TARGET_LEAD = timedelta(minutes=105)   # close - 1h45m = 14:15 ET on
+                                            # normal days, 11:15 on half days
+MAX_WAIT = timedelta(hours=3, minutes=30)   # sanity cap on any single sleep
+
+
+def seconds_until_target(mode: str, now_et: datetime, market_close: datetime):
+    """How long an early firing should sleep before doing its work.
+
+    Returns (seconds, target). Zero seconds means work immediately —
+    either we're already at/past the target (a delayed firing) or the
+    gap exceeds MAX_WAIT (leave it to the guard to reject).
+    """
+    if mode == "entry":
+        target = datetime.combine(now_et.date(), ENTRY_TARGET, tzinfo=ET)
+    else:
+        target = market_close - EXIT_TARGET_LEAD
+    delta = target - now_et
+    if timedelta(0) < delta <= MAX_WAIT:
+        return delta.total_seconds(), target
+    return 0.0, target
 
 
 def market_hours_today(now_et: datetime):
@@ -235,6 +261,29 @@ def main() -> int:
     if args.force:
         print(f"[guard] bypassed via --force")
     else:
+        # Cheap disqualifiers first, so an early firing never sleeps for
+        # hours only to discover the day was a holiday or already handled.
+        import journal
+
+        if market_hours_today(now_et) is None:
+            print(f"[guard] {now_et:%Y-%m-%d}: market closed (weekend or NYSE holiday)")
+            return 0
+        if journal.already_ran(f"{args.mode}_run", now_et.date().isoformat()):
+            print(f"[guard] {args.mode} run already completed today — skipping")
+            return 0
+
+        # Early firing? Sleep until the target work time (see workflow:
+        # crons aim early so GitHub's queue lag lands inside this sleep).
+        _, market_close = market_hours_today(now_et)
+        wait_s, target = seconds_until_target(args.mode, now_et, market_close)
+        if wait_s > 0:
+            print(
+                f"[wait] fired early at {now_et:%H:%M} ET — "
+                f"sleeping {int(wait_s / 60)} min until {target:%H:%M} ET"
+            )
+            time_mod.sleep(wait_s)
+            now_et = datetime.now(tz=ET)
+
         ok, reason = guard(args.mode, now_et)
         print(f"[guard] mode={args.mode} now={now_et:%Y-%m-%d %H:%M %Z}: {reason}")
         if not ok:
