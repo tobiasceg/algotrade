@@ -16,10 +16,15 @@ name: trading-bot
 
 on:
   schedule:
-    - cron: "7 12 * * 1-5"   # entry — 8:07 ET in summer; sleeps to 10:00
-    - cron: "7 13 * * 1-5"   # entry — DST twin, doubles as first backup
+    # Observed lag this week reached 3.5h, and some events were dropped
+    # outright — so each run aims VERY early (the sleep in main.py holds
+    # the work to its target time) and has staggered backups behind it.
+    - cron: "37 9 * * 1-5"   # entry — 5:37 ET in summer; sleeps to 10:00
+    - cron: "37 10 * * 1-5"  # entry — DST twin / first backup
+    - cron: "7 13 * * 1-5"   # entry — mid backup (9:07 ET summer)
     - cron: "37 15 * * 1-5"  # entry — late backup, lands mid-window
-    - cron: "7 16 * * 1-5"   # exit  — 12:07 ET in summer; sleeps to 14:15
+    - cron: "37 13 * * 1-5"  # exit  — 9:37 ET in summer; sleeps to 14:15
+    - cron: "7 16 * * 1-5"   # exit  — backup (12:07 ET summer)
     - cron: "7 17 * * 1-5"   # exit  — DST twin / backup
     - cron: "7 19 * * 1-5"   # exit  — late backup, still before the close
   # Manual trigger for testing from the GitHub UI (Actions tab -> Run workflow)
@@ -51,9 +56,10 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    # Generous: an early firing can spend up to ~3.5h asleep waiting for
+    # Generous: an early firing can spend up to ~5h asleep waiting for
     # its target time. Idle runner time is free on a public repo.
-    timeout-minutes: 240
+    # (GitHub's hard per-job ceiling is 6h.)
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
@@ -75,8 +81,8 @@ jobs:
             echo "force=${{ inputs.force && '--force' || '' }}" >> "$GITHUB_OUTPUT"
           else
             case "${{ github.event.schedule }}" in
-              "7 12 * * 1-5"|"7 13 * * 1-5"|"37 15 * * 1-5") echo "mode=entry" >> "$GITHUB_OUTPUT" ;;
-              *)                                             echo "mode=exit"  >> "$GITHUB_OUTPUT" ;;
+              "37 9 * * 1-5"|"37 10 * * 1-5"|"7 13 * * 1-5"|"37 15 * * 1-5") echo "mode=entry" >> "$GITHUB_OUTPUT" ;;
+              *)                                                             echo "mode=exit"  >> "$GITHUB_OUTPUT" ;;
             esac
             echo "force=" >> "$GITHUB_OUTPUT"
           fi

@@ -40,7 +40,7 @@ EXIT_LEAD = timedelta(hours=2, minutes=15)
 ENTRY_TARGET = time(10, 0)                  # work starts 10:00 ET sharp
 EXIT_TARGET_LEAD = timedelta(minutes=105)   # close - 1h45m = 14:15 ET on
                                             # normal days, 11:15 on half days
-MAX_WAIT = timedelta(hours=3, minutes=30)   # sanity cap on any single sleep
+MAX_WAIT = timedelta(hours=5)               # sanity cap on any single sleep
 
 
 def seconds_until_target(mode: str, now_et: datetime, market_close: datetime):
