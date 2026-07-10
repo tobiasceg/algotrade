@@ -19,14 +19,17 @@ on:
     # Observed lag this week reached 3.5h, and some events were dropped
     # outright — so each run aims VERY early (the sleep in main.py holds
     # the work to its target time) and has staggered backups behind it.
-    - cron: "37 9 * * 1-5"   # entry — 5:37 ET in summer; sleeps to 10:00
-    - cron: "37 10 * * 1-5"  # entry — DST twin / first backup
-    - cron: "7 13 * * 1-5"   # entry — mid backup (9:07 ET summer)
-    - cron: "37 15 * * 1-5"  # entry — late backup, lands mid-window
-    - cron: "37 13 * * 1-5"  # exit  — 9:37 ET in summer; sleeps to 14:15
-    - cron: "7 16 * * 1-5"   # exit  — backup (12:07 ET summer)
-    - cron: "7 17 * * 1-5"   # exit  — DST twin / backup
-    - cron: "7 19 * * 1-5"   # exit  — late backup, still before the close
+    # Crons fire EVERY day: on weekends and NYSE holidays no trading
+    # happens, but each firing logs a timing probe to the journal, so
+    # closed days measure GitHub's scheduler lag for free.
+    - cron: "37 9 * * *"   # entry — 5:37 ET in summer; sleeps to 10:00
+    - cron: "37 10 * * *"  # entry — DST twin / first backup
+    - cron: "7 13 * * *"   # entry — mid backup (9:07 ET summer)
+    - cron: "37 15 * * *"  # entry — late backup, lands mid-window
+    - cron: "37 13 * * *"  # exit  — 9:37 ET in summer; sleeps to 14:15
+    - cron: "7 16 * * *"   # exit  — backup (12:07 ET summer)
+    - cron: "7 17 * * *"   # exit  — DST twin / backup
+    - cron: "7 19 * * *"   # exit  — late backup, still before the close
   # Manual trigger for testing from the GitHub UI (Actions tab -> Run workflow)
   workflow_dispatch:
     inputs:
@@ -81,8 +84,8 @@ jobs:
             echo "force=${{ inputs.force && '--force' || '' }}" >> "$GITHUB_OUTPUT"
           else
             case "${{ github.event.schedule }}" in
-              "37 9 * * 1-5"|"37 10 * * 1-5"|"7 13 * * 1-5"|"37 15 * * 1-5") echo "mode=entry" >> "$GITHUB_OUTPUT" ;;
-              *)                                                             echo "mode=exit"  >> "$GITHUB_OUTPUT" ;;
+              "37 9 * * *"|"37 10 * * *"|"7 13 * * *"|"37 15 * * *") echo "mode=entry" >> "$GITHUB_OUTPUT" ;;
+              *)                                                     echo "mode=exit"  >> "$GITHUB_OUTPUT" ;;
             esac
             echo "force=" >> "$GITHUB_OUTPUT"
           fi
@@ -91,6 +94,9 @@ jobs:
         id: bot
         run: python main.py --mode ${{ steps.mode.outputs.mode }} ${{ steps.mode.outputs.force }}
         env:
+          # Which cron slot triggered this run — lets main.py measure
+          # GitHub's scheduling lag (empty on manual runs).
+          SCHEDULE_CRON: ${{ github.event.schedule }}
           # Add these under repo Settings -> Secrets and variables -> Actions
           # as the later steps get built. Missing secrets are just empty here.
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}

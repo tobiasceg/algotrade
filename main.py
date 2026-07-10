@@ -11,9 +11,10 @@ the off-season duplicate lands outside its time window and exits cleanly.
 """
 
 import argparse
+import os
 import sys
 import time as time_mod
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
@@ -58,6 +59,54 @@ def seconds_until_target(mode: str, now_et: datetime, market_close: datetime):
     if timedelta(0) < delta <= MAX_WAIT:
         return delta.total_seconds(), target
     return 0.0, target
+
+
+def cron_lag_minutes(cron: str, now_utc: datetime) -> float | None:
+    """Minutes between a cron expression's scheduled slot and now.
+
+    Crons here fire at most once a day, so the slot is today's HH:MM from
+    the expression; a negative gap means the firing slipped past midnight
+    UTC, so it belongs to yesterday's slot.
+    """
+    try:
+        minute, hour = cron.split()[:2]
+        scheduled = now_utc.replace(
+            hour=int(hour), minute=int(minute), second=0, microsecond=0
+        )
+    except (ValueError, IndexError):
+        return None
+    lag = (now_utc - scheduled).total_seconds() / 60
+    if lag < 0:
+        lag += 24 * 60
+    return round(lag, 1)
+
+
+def log_timing_probe(mode: str) -> None:
+    """On market-closed days, turn each firing into scheduler telemetry.
+
+    No trading happens, but GitHub's cron lag is exactly as measurable on a
+    Saturday as on a Monday — so closed days build the dataset that tells
+    us whether the free scheduler is reliable enough to keep. Records go to
+    the journal only (no Telegram; eight probes a day would be spam).
+    """
+    cron = os.environ.get("SCHEDULE_CRON", "")
+    now_utc = datetime.now(tz=timezone.utc)
+    lag = cron_lag_minutes(cron, now_utc)
+    if lag is None:
+        return  # manual or local run — nothing to measure
+
+    import journal
+
+    journal.log(
+        "timing_probe",
+        date=now_utc.date().isoformat(),
+        mode=mode,
+        cron=cron,
+        scheduled_utc=cron.split()[1].zfill(2) + ":" + cron.split()[0].zfill(2),
+        actual_utc=now_utc.strftime("%H:%M"),
+        lag_minutes=lag,
+    )
+    print(f"[probe] market closed — {mode} cron '{cron}' ran {lag:.0f} min after its slot")
 
 
 def market_hours_today(now_et: datetime):
@@ -267,6 +316,7 @@ def main() -> int:
 
         if market_hours_today(now_et) is None:
             print(f"[guard] {now_et:%Y-%m-%d}: market closed (weekend or NYSE holiday)")
+            log_timing_probe(args.mode)
             return 0
         if journal.already_ran(f"{args.mode}_run", now_et.date().isoformat()):
             print(f"[guard] {args.mode} run already completed today — skipping")
