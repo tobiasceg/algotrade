@@ -7,3 +7,4 @@
 {"ts": "2026-07-10T15:39:28+00:00", "event": "entry_run", "date": "2026-07-10", "dry_run": false, "market": {"benchmark": "QQQ", "close": 723.28, "ma50": 713.22, "above_trend": true}, "macro_events": [{"date": "2026-07-14", "event": "CPI release (Jun)", "days_away": 4}], "candidates": [], "veto": [], "placed": [], "rejected": []}
 {"ts": "2026-07-10T18:15:02+00:00", "event": "exit_run", "date": "2026-07-10", "dry_run": false, "actions": ["no open positions"]}
 {"ts": "2026-07-11T10:43:46+00:00", "event": "timing_probe", "date": "2026-07-11", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "10:43", "lag_minutes": 66.8}
+{"ts": "2026-07-11T11:34:12+00:00", "event": "timing_probe", "date": "2026-07-11", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "11:34", "lag_minutes": 57.2}
