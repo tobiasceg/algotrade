@@ -20,13 +20,28 @@ def make_candidate(symbol="VRT", close=100.0, **overrides) -> dict:
     return base
 
 
+def make_short_candidate(symbol="VRT", close=100.0, **overrides) -> dict:
+    base = {
+        "symbol": symbol,
+        "action": "SELL_SHORT",
+        "side": "short",
+        "signal_date": "2026-07-17",
+        "close": close,
+        "stop": round(close * 1.05, 2),    # stop ABOVE for a short
+        "target": round(close * 0.92, 2),  # target BELOW
+        "reason": "test",
+    }
+    base.update(overrides)
+    return base
+
+
 def make_account(**overrides) -> dict:
     base = {
         "equity": 100_000.0,
         "cash": 100_000.0,
         "positions": {},
         "open_order_symbols": [],
-        "buys_today": 0,
+        "entries_today": 0,
     }
     base.update(overrides)
     return base
@@ -48,9 +63,9 @@ def test_daily_trade_cap():
     assert rejected[0]["symbol"] == "SMCI" and "daily cap" in rejected[0]["reason"]
 
 
-def test_cap_counts_earlier_buys_today():
+def test_cap_counts_earlier_entries_today():
     approved, rejected = guardrails.apply(
-        [make_candidate()], make_account(buys_today=2)
+        [make_candidate()], make_account(entries_today=2)
     )
     assert approved == [] and "daily cap" in rejected[0]["reason"]
 
@@ -94,6 +109,38 @@ def test_malformed_stop_rejected():
     inverted = make_candidate(stop=110.0)  # stop above close
     approved, rejected = guardrails.apply([inverted], make_account())
     assert approved == [] and "malformed" in rejected[0]["reason"]
+
+
+def test_short_sizing_half_budget_and_lower_limit():
+    approved, rejected = guardrails.apply(
+        [make_short_candidate(close=100.0)], make_account()
+    )
+    assert rejected == []
+    (order,) = approved
+    assert order["limit_price"] == 98.0             # close * 0.98 (sell floor)
+    assert order["qty"] == 51                       # 5_000 budget // 98
+    assert order["est_cost"] <= 5_000
+
+
+def test_short_inverted_levels_rejected():
+    inverted = make_short_candidate(stop=95.0)  # stop BELOW close: wrong for a short
+    approved, rejected = guardrails.apply([inverted], make_account())
+    assert approved == [] and "malformed" in rejected[0]["reason"]
+
+    negative_target = make_short_candidate(target=-3.0)
+    approved, rejected = guardrails.apply([negative_target], make_account())
+    assert approved == [] and "malformed" in rejected[0]["reason"]
+
+
+def test_books_share_the_daily_cap():
+    cands = [
+        make_candidate("VRT"),
+        make_short_candidate("ANET"),
+        make_short_candidate("SMCI"),
+    ]
+    approved, rejected = guardrails.apply(cands, make_account())
+    assert [o["symbol"] for o in approved] == ["VRT", "ANET"]
+    assert rejected[0]["symbol"] == "SMCI" and "daily cap" in rejected[0]["reason"]
 
 
 if __name__ == "__main__":

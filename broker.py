@@ -30,7 +30,7 @@ SIM_ACCOUNT = {
     "cash": 100_000.0,
     "positions": {},
     "open_order_symbols": [],
-    "buys_today": 0,
+    "entries_today": 0,
 }
 
 # Alpaca order states that mean "this order is still live".
@@ -99,10 +99,12 @@ def account_state(tc) -> dict:
     )
     # Count entries placed today whether or not they filled — this is what
     # makes the 2-trades-per-day cap robust against a duplicate morning run.
-    buys_today = sum(
+    # Every bot entry (long BUY or short SELL) is a bracket parent, which is
+    # the only order kind in the flattened list that carries child legs.
+    entries_today = sum(
         1
         for o in orders
-        if _val(o.side) == "buy"
+        if getattr(o, "legs", None)
         and o.submitted_at is not None
         and o.submitted_at.astimezone(ET) >= midnight
     )
@@ -111,12 +113,17 @@ def account_state(tc) -> dict:
         "cash": float(acct.cash),
         "positions": positions,
         "open_order_symbols": open_order_symbols,
-        "buys_today": buys_today,
+        "entries_today": entries_today,
     }
 
 
 def submit_bracket(tc, order: dict) -> str:
-    """Entry limit + stop + target as one atomic bracket. Returns order id."""
+    """Entry limit + stop + target as one atomic bracket. Returns order id.
+
+    Works for both books: a long entry is a BUY with the stop below and
+    target above; a short entry is a SELL with the stop above and target
+    below. Alpaca's bracket class handles both natively.
+    """
     from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
     from alpaca.trading.requests import (
         LimitOrderRequest,
@@ -124,10 +131,11 @@ def submit_bracket(tc, order: dict) -> str:
         TakeProfitRequest,
     )
 
+    side = OrderSide.SELL if order.get("side") == "short" else OrderSide.BUY
     req = LimitOrderRequest(
         symbol=order["symbol"],
         qty=order["qty"],
-        side=OrderSide.BUY,
+        side=side,
         time_in_force=TimeInForce.DAY,
         limit_price=order["limit_price"],
         order_class=OrderClass.BRACKET,
@@ -136,6 +144,17 @@ def submit_bracket(tc, order: dict) -> str:
     )
     result = tc.submit_order(req)
     return str(result.id)
+
+
+def shortable(tc, symbol: str) -> bool:
+    """True only if Alpaca marks the asset shortable AND easy to borrow.
+    Any lookup failure fails closed — a missed short is cheap."""
+    try:
+        asset = tc.get_asset(symbol)
+        return bool(asset.shortable) and bool(getattr(asset, "easy_to_borrow", False))
+    except Exception as exc:  # noqa: BLE001 — fail closed on any API problem
+        print(f"[broker] shortable({symbol}) lookup failed: {exc}")
+        return False
 
 
 def _trading_days_held(entry_date: date, today: date) -> int:
@@ -154,6 +173,7 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
 
     for p in positions:
         symbol = p.symbol
+        is_short = float(p.qty) < 0
         live = [
             o for o in orders
             if o.symbol == symbol and _val(o.status) in ACTIVE_STATUSES
@@ -161,11 +181,13 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
         entry_rec = journal.last_order_for(symbol)
 
         # --- time stop ---------------------------------------------------
+        # Shorts get a shorter leash: bear-market rallies are violent.
+        max_hold = config.SHORT_MAX_HOLD_DAYS if is_short else config.MAX_HOLD_DAYS
         if entry_rec and entry_rec.get("signal_date"):
             held = _trading_days_held(
                 date.fromisoformat(entry_rec["signal_date"]), now_et.date()
             )
-            if held >= config.MAX_HOLD_DAYS:
+            if held >= max_hold:
                 for o in live:
                     try:
                         tc.cancel_order_by_id(str(o.id))
@@ -173,16 +195,18 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
                         print(f"[exit] cancel {symbol} {o.id}: {exc}")
                 tc.close_position(symbol)
                 actions.append(
-                    f"TIME EXIT {symbol}: held {held} trading days "
-                    f"(max {config.MAX_HOLD_DAYS}), closed at market"
+                    f"TIME EXIT {symbol}{' (short)' if is_short else ''}: "
+                    f"held {held} trading days (max {max_hold}), closed at market"
                 )
                 continue
         else:
             actions.append(f"WARNING {symbol}: no journal entry — age unknown, time stop skipped")
 
         # --- stop audit ---------------------------------------------------
+        # A long is protected by a SELL stop below; a short by a BUY stop above.
+        protect_side = "buy" if is_short else "sell"
         has_stop = any(
-            _val(o.side) == "sell" and "stop" in _val(o.type or o.order_type)
+            _val(o.side) == protect_side and "stop" in _val(o.type or o.order_type)
             for o in live
         )
         if not has_stop:
@@ -194,8 +218,8 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
                 tc.submit_order(
                     StopOrderRequest(
                         symbol=symbol,
-                        qty=int(float(p.qty)),
-                        side=OrderSide.SELL,
+                        qty=abs(int(float(p.qty))),
+                        side=OrderSide.BUY if is_short else OrderSide.SELL,
                         time_in_force=TimeInForce.GTC,
                         stop_price=stop_price,
                     )

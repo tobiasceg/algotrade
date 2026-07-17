@@ -40,6 +40,14 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
 - **Timing probes live since Jul 11:** crons now fire 7 days/week; on market-closed
   days each firing logs `timing_probe` (slot, actual time, lag minutes) to the journal
   instead of exiting silently — building the lag/drop dataset for the scheduler decision.
+- **Short book added Jul 18** (`short_rules.py`): mirror of the long rules, active only
+  when QQQ is ≥1% BELOW its 50d MA (hysteresis; the two books are mutually exclusive).
+  Deliberate asymmetries: half position size (5%), tighter extension cap (4% below the
+  20d low), 25% crash-from-high cap, mechanical earnings block (5d, fail-closed on
+  unknown dates), 3-day time stop, Alpaca shortable/easy-to-borrow check at submission.
+  Same veto layer, guardrails, brackets (stop above, target below), journal (`book`/
+  `side` fields). Longs always take precedence: shorts are only consulted when the
+  long book returns nothing.
 
 ## 3. FILES IN FLIGHT
 
@@ -50,13 +58,14 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
 | `config.py` | Watchlist + every tunable (rule thresholds, guardrail limits, veto model, hold days) |
 | `data_fetch.py` | Daily snapshot: yfinance bars (partial-bar-safe), indicators incl. ATR, earnings, 24h news, macro calendar |
 | `rules.py` | Deterministic entry rules → ranked candidates with ATR stops/targets |
+| `short_rules.py` | Short-side mirror: breakdown rules, risk-off regime gate with 1% hysteresis, crash cap, mechanical earnings block |
 | `veto.py` | Claude APPROVE/VETO screen (claude-opus-4-8, structured outputs, fail-closed; skips = arm A) |
 | `guardrails.py` | Pure-code limits: whitelist, 10%/position, 2 trades/day, 20% cash floor, sizing |
 | `broker.py` | Alpaca paper: bracket orders (limit +2% cap), exit checks (5-day time stop, stop audit/re-attach) |
 | `notify.py` | Telegram, fail-soft |
 | `journal.py` | Append-only `journal.jsonl` + `already_ran` dedupe + `last_order_for` |
 | `macro_calendar.json` | 2026 FOMC/CPI dates (verified vs Fed/BLS) — refresh each January |
-| `test_rules.py`, `test_guardrails.py`, `test_veto.py` | Synthetic-data suites, plain `python file.py` |
+| `test_rules.py`, `test_short_rules.py`, `test_guardrails.py`, `test_veto.py` | Synthetic-data suites, plain `python file.py` |
 | `journal.jsonl` | Decision log; committed back by the workflow after every real run |
 | `snapshots/` | Daily JSON snapshots (gitignored locally; 90-day artifacts in CI) |
 

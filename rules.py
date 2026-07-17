@@ -63,6 +63,7 @@ def generate_candidates(snapshot: dict) -> list[dict]:
             {
                 "symbol": symbol,
                 "action": "BUY",
+                "side": "long",
                 "signal_date": t["date"],
                 "close": t["close"],
                 "stop": stop,

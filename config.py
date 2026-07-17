@@ -52,6 +52,23 @@ MAX_ENTRY_SLIP_PCT = 2.0     # entry is a DAY limit this % above signal close;
 MAX_HOLD_DAYS = 5            # time stop, in trading days; momentum trades
                              # that go nowhere get closed, not babysat
 
+# Short book — mirror of the long rules, active only in a risk-off regime.
+# Deliberately NOT a perfect mirror: down moves overshoot and snap back
+# harder, gaps go through stops, and squeezes exist, so every asymmetry
+# below leans conservative.
+SHORT_REGIME_BUFFER_PCT = 1.0   # QQQ must be at least this % BELOW its 50d MA
+                                # (hysteresis: no shorting the first wobble)
+MAX_BREAKDOWN_EXT_PCT = 4.0     # skip if close is more than this % below the
+                                # 20-day low (tighter than the long side's 5)
+MAX_CRASH_FROM_HIGH_PCT = 25.0  # don't short a name already down this much
+                                # from its 20d high — the easy move happened
+SHORT_EARNINGS_BLOCK_DAYS = 5   # mechanical earnings block, enforced in code
+                                # (a gap up through a short's stop is the
+                                # worst case in the book; unknown date = skip)
+MAX_SHORT_POSITION_PCT = 0.05   # half the long size, same reasoning
+SHORT_MAX_HOLD_DAYS = 3         # bear rallies are violent; a short that is
+                                # not working quickly is wrong
+
 # Claude veto layer (step 4)
 VETO_MODEL = "claude-opus-4-8"
 VETO_MAX_TOKENS = 512

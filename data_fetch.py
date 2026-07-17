@@ -80,6 +80,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     prior = df.iloc[:-1]
 
     high_20d = prior["High"].tail(config.BREAKOUT_LOOKBACK).max()
+    low_20d = prior["Low"].tail(config.BREAKOUT_LOOKBACK).min()
     avg_vol_20d = prior["Volume"].tail(config.VOLUME_LOOKBACK).mean()
 
     # True range = max(high-low, |high-prev close|, |low-prev close|);
@@ -102,6 +103,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "low": round(float(signal["Low"]), 2),
         "volume": int(signal["Volume"]),
         "high_20d": round(float(high_20d), 2),
+        "low_20d": round(float(low_20d), 2),
         "avg_vol_20d": int(avg_vol_20d),
         "vol_ratio": round(float(signal["Volume"] / avg_vol_20d), 2),
         "ma20": round(float(df["Close"].tail(20).mean()), 2),
@@ -109,6 +111,10 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "atr14": round(float(atr), 2),
         "pct_above_high_20d": round(
             float((signal["Close"] / high_20d - 1) * 100), 2
+        ),
+        # Positive when the close is BELOW the 20-day low (short-side mirror)
+        "pct_below_low_20d": round(
+            float((1 - signal["Close"] / low_20d) * 100), 2
         ),
     }
 

@@ -174,6 +174,7 @@ def run_entry(now_et: datetime) -> None:
     import journal
     import notify
     import rules
+    import short_rules
     import veto
 
     # Step 2: assemble the daily data snapshot
@@ -182,9 +183,18 @@ def run_entry(now_et: datetime) -> None:
     print(data_fetch.summarize(snapshot))
     print(f"[entry] snapshot written to {path}")
 
-    # Step 3: deterministic entry rules propose candidates (often none)
+    # Step 3: deterministic entry rules propose candidates (often none).
+    # If the long book produced nothing, consult the short book (3b) — its
+    # regime gate (QQQ well below the 50d MA) is the mirror of the long
+    # gate, so at most one book can ever be active on a given day.
     candidates = rules.generate_candidates(snapshot)
     print(rules.explain(candidates))
+    book = "long"
+    if not candidates:
+        candidates = short_rules.generate_candidates(snapshot)
+        print(short_rules.explain(candidates))
+        if candidates:
+            book = "short"
 
     # Step 4: Claude veto — may only shrink the list, never expand it
     survivors, veto_decisions = veto.review(candidates, snapshot)
@@ -200,6 +210,7 @@ def run_entry(now_et: datetime) -> None:
     for order in approved:
         record = {
             "symbol": order["symbol"],
+            "side": order.get("side", "long"),
             "qty": order["qty"],
             "limit_price": order["limit_price"],
             "stop": order["stop"],
@@ -211,6 +222,13 @@ def run_entry(now_et: datetime) -> None:
             placed.append(order)
             print(f"[entry] DRY RUN — would submit: {record}")
         else:
+            # Borrowability is broker state, not rules state — checked here,
+            # at the last moment before submission. Fails closed.
+            if order.get("side") == "short" and not broker.shortable(tc, order["symbol"]):
+                reason = "not shortable / not easy-to-borrow at Alpaca"
+                journal.log("order_rejected", symbol=order["symbol"], reason=reason)
+                rejected.append({"symbol": order["symbol"], "reason": reason})
+                continue
             try:
                 order_id = broker.submit_bracket(tc, order)
                 journal.log("order_submitted", order_id=order_id, **record)
@@ -223,6 +241,7 @@ def run_entry(now_et: datetime) -> None:
         "entry_run",
         date=snapshot["date"],
         dry_run=dry_run,
+        book=book,
         market=snapshot["market"],
         macro_events=snapshot["macro_events"],
         candidates=[c["symbol"] for c in candidates],
@@ -253,10 +272,16 @@ def compose_entry_message(snapshot, candidates, veto_decisions, placed, rejected
         elif d["decision"] == "SKIPPED":
             lines.append(f"note: {d['reason']}")
     for o in placed:
-        lines.append(
-            f"BUY {o['qty']} {o['symbol']} @ <={o['limit_price']} "
-            f"| stop {o['stop']} | target {o['target']} ({o['reason']})"
-        )
+        if o.get("side") == "short":
+            lines.append(
+                f"SHORT {o['qty']} {o['symbol']} @ >={o['limit_price']} "
+                f"| stop {o['stop']} | target {o['target']} ({o['reason']})"
+            )
+        else:
+            lines.append(
+                f"BUY {o['qty']} {o['symbol']} @ <={o['limit_price']} "
+                f"| stop {o['stop']} | target {o['target']} ({o['reason']})"
+            )
     for r in rejected:
         lines.append(f"skipped {r['symbol']}: {r['reason']}")
     lines.append(
