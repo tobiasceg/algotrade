@@ -32,3 +32,4 @@
 {"ts": "2026-07-16T18:15:01+00:00", "event": "exit_run", "date": "2026-07-16", "dry_run": false, "actions": ["no open positions"]}
 {"ts": "2026-07-17T14:00:15+00:00", "event": "entry_run", "date": "2026-07-17", "dry_run": false, "market": {"benchmark": "QQQ", "close": 705.94, "ma50": 718.23, "above_trend": false}, "macro_events": [], "candidates": [], "veto": [], "placed": [], "rejected": []}
 {"ts": "2026-07-17T18:15:02+00:00", "event": "exit_run", "date": "2026-07-17", "dry_run": false, "actions": ["no open positions"]}
+{"ts": "2026-07-18T10:47:42+00:00", "event": "timing_probe", "date": "2026-07-18", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "10:47", "lag_minutes": 70.7}
