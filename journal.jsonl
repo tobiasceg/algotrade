@@ -50,3 +50,4 @@
 {"ts": "2026-07-19T20:11:19+00:00", "event": "timing_probe", "date": "2026-07-19", "mode": "exit", "cron": "7 19 * * *", "scheduled_utc": "19:07", "actual_utc": "20:11", "lag_minutes": 64.3}
 {"ts": "2026-07-20T14:00:15+00:00", "event": "entry_run", "date": "2026-07-20", "dry_run": false, "book": "long", "market": {"benchmark": "QQQ", "close": 695.33, "ma50": 718.52, "above_trend": false}, "macro_events": [], "candidates": [], "veto": [], "placed": [], "rejected": []}
 {"ts": "2026-07-20T18:15:00+00:00", "event": "exit_run", "date": "2026-07-20", "dry_run": false, "actions": ["no open positions"]}
+{"ts": "2026-07-21T14:00:18+00:00", "event": "entry_run", "date": "2026-07-21", "dry_run": false, "book": "long", "market": {"benchmark": "QQQ", "close": 696.06, "ma50": 718.54, "above_trend": false}, "macro_events": [], "candidates": [], "veto": [], "placed": [], "rejected": []}
