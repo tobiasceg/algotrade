@@ -90,6 +90,14 @@ jobs:
             echo "force=" >> "$GITHUB_OUTPUT"
           fi
 
+      # A run that queued behind another can check out a snapshot taken
+      # seconds before the previous run pushed its journal record — stale
+      # enough to defeat the dedupe (2026-07-20: duplicate entry run and
+      # duplicate Telegram). By the time this step runs, that push is tens
+      # of seconds old, so an explicit pull always sees the latest journal.
+      - name: Sync journal
+        run: git pull --rebase origin main
+
       - name: Run bot
         id: bot
         run: python main.py --mode ${{ steps.mode.outputs.mode }} ${{ steps.mode.outputs.force }}

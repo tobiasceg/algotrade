@@ -1,0 +1,5 @@
+# The journal is append-only: when two runs race to commit it, both records
+# are valid — take the union of their lines instead of raising a conflict.
+# (This is what let Monday's duplicate run lose its journal record: its
+# rebase conflicted and the whole persist step failed.)
+journal.jsonl merge=union

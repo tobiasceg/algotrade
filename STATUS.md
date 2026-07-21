@@ -37,6 +37,9 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
   early on odd minutes + `main.py` sleeps to the target time; staggered backup crons;
   journal-based once-per-day dedupe; wide guard windows as last resort; serialized
   concurrency. **First bullseye achieved:** Jul 10 exit ran at exactly 14:15:00 ET.
+  Jul 21: closed the stale-checkout race (Jul 20 duplicate entry Telegram) with
+  `journal.jsonl merge=union` in `.gitattributes` + a `git pull --rebase` step
+  right before the bot runs.
 - **Timing probes live since Jul 11:** crons now fire 7 days/week; on market-closed
   days each firing logs `timing_probe` (slot, actual time, lag minutes) to the journal
   instead of exiting silently — building the lag/drop dataset for the scheduler decision.
