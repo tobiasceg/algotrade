@@ -42,6 +42,23 @@ def short_regime_on(market: dict) -> bool:
     return market["close"] < threshold
 
 
+def breakdown_watch(snapshot: dict) -> list[dict]:
+    """Names that closed below their prior 20-day low, strongest volume first.
+
+    A diagnostic for the alert only — it says which names are the closest to
+    a valid short (the breakdown is there; usually the volume floor is what
+    they miss), so a quiet 'no setups' night still explains itself.
+    """
+    watch = []
+    for symbol, t in snapshot.get("tickers", {}).items():
+        close, low_20d = t.get("close"), t.get("low_20d")
+        if close is None or low_20d is None or close >= low_20d:
+            continue
+        watch.append({"symbol": symbol, "vol_ratio": t.get("vol_ratio")})
+    watch.sort(key=lambda w: (w["vol_ratio"] is not None, w["vol_ratio"]), reverse=True)
+    return watch
+
+
 def generate_candidates(snapshot: dict) -> list[dict]:
     """Apply short-entry rules to a snapshot. Returns candidates ranked by
     volume ratio, or an empty list (a normal, common outcome)."""

@@ -187,14 +187,25 @@ def run_entry(now_et: datetime) -> None:
     # If the long book produced nothing, consult the short book (3b) — its
     # regime gate (QQQ well below the 50d MA) is the mirror of the long
     # gate, so at most one book can ever be active on a given day.
-    candidates = rules.generate_candidates(snapshot)
-    print(rules.explain(candidates))
-    book = "long"
-    if not candidates:
-        candidates = short_rules.generate_candidates(snapshot)
-        print(short_rules.explain(candidates))
-        if candidates:
-            book = "short"
+    m = snapshot.get("market") or {}
+    long_candidates = rules.generate_candidates(snapshot)
+    print(rules.explain(long_candidates))
+
+    short_candidates: list[dict] = []
+    short_consulted = not long_candidates
+    if short_consulted:
+        short_candidates = short_rules.generate_candidates(snapshot)
+        print(short_rules.explain(short_candidates))
+
+    if long_candidates:
+        candidates, book = long_candidates, "long"
+    elif short_candidates:
+        candidates, book = short_candidates, "short"
+    else:
+        candidates, book = [], None
+
+    # Per-book status for the alert, so a quiet night still says *why*.
+    books = describe_books(m, long_candidates, short_consulted, short_candidates, snapshot)
 
     # Step 4: Claude veto — may only shrink the list, never expand it
     survivors, veto_decisions = veto.review(candidates, snapshot)
@@ -241,7 +252,8 @@ def run_entry(now_et: datetime) -> None:
         "entry_run",
         date=snapshot["date"],
         dry_run=dry_run,
-        book=book,
+        book=book or "none",
+        books=books,
         market=snapshot["market"],
         macro_events=snapshot["macro_events"],
         candidates=[c["symbol"] for c in candidates],
@@ -251,12 +263,65 @@ def run_entry(now_et: datetime) -> None:
     )
     notify.send(
         compose_entry_message(
-            snapshot, candidates, veto_decisions, placed, rejected, account, dry_run
+            snapshot, books, veto_decisions, placed, rejected, account, dry_run
         )
     )
 
 
-def compose_entry_message(snapshot, candidates, veto_decisions, placed, rejected, account, dry_run) -> str:
+def describe_books(m, long_candidates, short_consulted, short_candidates, snapshot) -> list[dict]:
+    """One human-readable status line per book, for the alert and journal.
+
+    Explains a quiet night: which book was live, and if empty, why. Each
+    entry is {"book", "status"} where status is a short phrase.
+    """
+    import config
+    import short_rules
+
+    if not m:
+        return [{"book": "long", "status": "regime unknown — no benchmark data"}]
+
+    # Long book: gated purely on the trend filter.
+    if m["above_trend"]:
+        n = len(long_candidates)
+        long_status = f"active — {n} candidate(s)" if n else "active — no breakouts"
+    else:
+        long_status = f"idle — {m['benchmark']} below 50d MA (risk-off)"
+
+    # Short book: only consulted when the long book came up empty.
+    if not short_consulted:
+        short_status = "not consulted — long setups took priority"
+    elif not short_rules.short_regime_on(m):
+        if m["close"] >= m["ma50"]:
+            short_status = f"idle — {m['benchmark']} above 50d MA (risk-on)"
+        else:
+            short_status = (
+                f"idle — {m['benchmark']} less than "
+                f"{config.SHORT_REGIME_BUFFER_PCT:.0f}% below 50d MA "
+                "(inside hysteresis buffer)"
+            )
+    elif short_candidates:
+        short_status = f"active — {len(short_candidates)} candidate(s)"
+    else:
+        # Regime open but nothing qualified — name the closest miss.
+        watch = short_rules.breakdown_watch(snapshot)
+        if not watch:
+            short_status = "active — 0 names below their 20d low"
+        else:
+            best = watch[0]
+            vr = best["vol_ratio"]
+            vr_txt = f"{vr}x" if vr is not None else "n/a"
+            short_status = (
+                f"active — {len(watch)} below 20d low, but weak volume "
+                f"(best {best['symbol']} {vr_txt}, need {config.VOL_SURGE_MIN}x)"
+            )
+
+    return [
+        {"book": "long", "status": long_status},
+        {"book": "short", "status": short_status},
+    ]
+
+
+def compose_entry_message(snapshot, books, veto_decisions, placed, rejected, account, dry_run) -> str:
     m = snapshot["market"]
     lines = [f"[BOT] entry run {snapshot['date']}" + (" (DRY RUN)" if dry_run else "")]
     if m:
@@ -264,8 +329,10 @@ def compose_entry_message(snapshot, candidates, veto_decisions, placed, rejected
         lines.append(f"{m['benchmark']} {m['close']}, {trend} 50d MA ({m['ma50']})")
     for e in snapshot["macro_events"]:
         lines.append(f"macro: {e['event']} in {e['days_away']}d")
-    if not candidates:
-        lines.append("no setups today")
+    for b in books:
+        lines.append(f"{b['book']}: {b['status']}")
+    if not placed and not rejected:
+        lines.append("→ no trades today")
     for d in veto_decisions:
         if d["decision"] == "VETO":
             lines.append(f"VETOED {d['symbol']}: {d['reason']}")
