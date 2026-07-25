@@ -60,3 +60,4 @@
 {"ts": "2026-07-24T18:15:01+00:00", "event": "exit_run", "date": "2026-07-24", "dry_run": false, "actions": ["no open positions"]}
 {"ts": "2026-07-25T10:53:40+00:00", "event": "timing_probe", "date": "2026-07-25", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "10:53", "lag_minutes": 76.7}
 {"ts": "2026-07-25T11:47:21+00:00", "event": "timing_probe", "date": "2026-07-25", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "11:47", "lag_minutes": 70.4}
+{"ts": "2026-07-25T14:41:08+00:00", "event": "timing_probe", "date": "2026-07-25", "mode": "entry", "cron": "7 13 * * *", "scheduled_utc": "13:07", "actual_utc": "14:41", "lag_minutes": 94.1}
