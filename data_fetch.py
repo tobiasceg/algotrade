@@ -20,14 +20,45 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import pandas_market_calendars as mcal
 import yfinance as yf
 
 import config
 
 ET = ZoneInfo("America/New_York")
 
+# Yahoo's batch download intermittently comes back missing the newest bar.
+# When that happens the fetch is retried once after a short pause before the
+# run is abandoned (2026-07-15/27/29: three runs silently decided on
+# two-day-old prices, and Jul 29 missed a valid VRT short as a result).
+STALE_RETRY_SLEEP_S = 20
+
 
 # ---------------------------------------------------------------- bars
+
+def latest_completed_session(now_et: datetime) -> date:
+    """The most recent NYSE session whose closing bar should already exist.
+
+    This is what every ticker's signal bar MUST be dated. Without this
+    reference the pipeline has no way to tell a fresh snapshot from a stale
+    one — it just trusts whatever row the feed put last.
+    """
+    sched = mcal.get_calendar("NYSE").schedule(
+        start_date=now_et.date() - timedelta(days=14), end_date=now_et.date()
+    )
+    sessions = [d.date() for d in sched.index]
+    if not sessions:
+        return now_et.date()
+    # Today's own bar only counts once the consolidated close has settled.
+    if sessions[-1] == now_et.date() and now_et.time() < time(16, 20):
+        sessions = sessions[:-1]
+    return sessions[-1] if sessions else now_et.date()
+
+
+def stale_tickers(bars: dict[str, pd.DataFrame], expected: date) -> list[str]:
+    """Tickers whose newest bar is older than the expected session."""
+    return sorted(t for t, df in bars.items() if df.index[-1].date() != expected)
+
 
 def fetch_bars(tickers: list[str]) -> dict[str, pd.DataFrame]:
     """Download daily OHLCV history for all tickers in one batch request.
@@ -218,6 +249,31 @@ def build_snapshot() -> dict:
     print(f"[snapshot] fetching daily bars for {len(all_tickers)} tickers...")
     bars = fetch_bars(all_tickers)
 
+    # Freshness gate: a bar older than the last completed session means the
+    # feed short-changed us. Retry once — the failure is transient — then
+    # quarantine whatever is still stale rather than analysing old prices.
+    expected = latest_completed_session(now_et)
+    stale = stale_tickers(bars, expected)
+    if stale:
+        print(
+            f"[snapshot] WARNING: {len(stale)} ticker(s) stale vs {expected} "
+            f"({', '.join(stale[:6])}{'...' if len(stale) > 6 else ''}) — retrying once"
+        )
+        time_mod.sleep(STALE_RETRY_SLEEP_S)
+        bars = fetch_bars(all_tickers)
+        stale = stale_tickers(bars, expected)
+        if stale:
+            print(f"[snapshot] still stale after retry: {', '.join(stale)}")
+        else:
+            print("[snapshot] retry returned fresh bars")
+
+    # A stale benchmark means the regime itself is unknown, so no book can
+    # be trusted; a stale individual ticker is simply dropped from the
+    # watchlist for the day. Both are fail-closed.
+    benchmark_stale = config.BENCHMARK in stale or config.BENCHMARK not in bars
+    for symbol in stale:
+        bars.pop(symbol, None)
+
     # Market regime from the benchmark
     market = {}
     if config.BENCHMARK in bars:
@@ -247,6 +303,9 @@ def build_snapshot() -> dict:
     return {
         "date": today.isoformat(),
         "generated_at": now_et.isoformat(),
+        "expected_session": expected.isoformat(),
+        "stale_tickers": stale,
+        "benchmark_stale": benchmark_stale,
         "market": market,
         "macro_events": macro_events,
         "tickers": tickers_out,
@@ -263,7 +322,12 @@ def save_snapshot(snapshot: dict) -> Path:
 
 def summarize(snapshot: dict) -> str:
     """One-glance text summary, reused later for logs and Telegram."""
-    lines = [f"snapshot {snapshot['date']}: {len(snapshot['tickers'])} tickers"]
+    lines = [
+        f"snapshot {snapshot['date']}: {len(snapshot['tickers'])} tickers "
+        f"(signal bar {snapshot.get('expected_session', '?')})"
+    ]
+    if snapshot.get("stale_tickers"):
+        lines.append(f"  STALE, dropped: {', '.join(snapshot['stale_tickers'])}")
     m = snapshot["market"]
     if m:
         trend = "ABOVE" if m["above_trend"] else "BELOW"

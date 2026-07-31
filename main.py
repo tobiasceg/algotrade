@@ -169,6 +169,7 @@ def run_entry(now_et: datetime) -> None:
     print(f"[entry] {now_et:%Y-%m-%d %H:%M} ET — running entry pipeline")
 
     import broker
+    import config
     import data_fetch
     import guardrails
     import journal
@@ -182,6 +183,28 @@ def run_entry(now_et: datetime) -> None:
     path = data_fetch.save_snapshot(snapshot)
     print(data_fetch.summarize(snapshot))
     print(f"[entry] snapshot written to {path}")
+
+    # Freshness gate: a stale benchmark means the regime — the first gate of
+    # both books — would be judged on old prices, and any candidate's limit,
+    # stop and target would be anchored to them. Abandon the run instead.
+    # Deliberately NO entry_run record: without one the dedupe stays open,
+    # so a later backup firing can retry and may get a fresh feed.
+    if snapshot.get("benchmark_stale"):
+        expected = snapshot.get("expected_session")
+        journal.log(
+            "snapshot_stale",
+            date=snapshot["date"],
+            expected_session=expected,
+            stale_tickers=snapshot.get("stale_tickers", []),
+        )
+        msg = (
+            f"[BOT] entry run {snapshot['date']} ABORTED\n"
+            f"stale market data: no {config.BENCHMARK} bar for {expected}\n"
+            "decided nothing — a later backup run will retry"
+        )
+        print(f"[entry] {msg}")
+        notify.send(msg)
+        return
 
     # Step 3: deterministic entry rules propose candidates (often none).
     # If the long book produced nothing, consult the short book (3b) — its
@@ -302,17 +325,22 @@ def describe_books(m, long_candidates, short_consulted, short_candidates, snapsh
     elif short_candidates:
         short_status = f"active — {len(short_candidates)} candidate(s)"
     else:
-        # Regime open but nothing qualified — name the closest miss.
-        watch = short_rules.breakdown_watch(snapshot)
-        if not watch:
+        # Regime open but nothing qualified — tally the gates that actually
+        # did the blocking, read from the rules engine itself.
+        report = short_rules.breakdown_report(snapshot)
+        if not report:
             short_status = "active — 0 names below their 20d low"
         else:
-            best = watch[0]
-            vr = best["vol_ratio"]
-            vr_txt = f"{vr}x" if vr is not None else "n/a"
+            tally: dict[str, int] = {}
+            for r in report:
+                if r["gate"]:
+                    tally[r["gate"]] = tally.get(r["gate"], 0) + 1
+            detail = ", ".join(
+                f"{n} {gate}" for gate, n in sorted(tally.items(), key=lambda kv: -kv[1])
+            )
             short_status = (
-                f"active — {len(watch)} below 20d low, but weak volume "
-                f"(best {best['symbol']} {vr_txt}, need {config.VOL_SURGE_MIN}x)"
+                f"active — {len(report)} below 20d low, none qualified"
+                + (f" ({detail})" if detail else "")
             )
 
     return [

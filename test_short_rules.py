@@ -108,6 +108,61 @@ def test_ranked_by_volume_conviction():
     assert [c["symbol"] for c in out] == ["ANET", "SMCI", "VRT"]
 
 
+def test_blocking_gate_names_the_real_reason():
+    # The Jul 30 alert claimed "weak volume (best VRT 4.42x)" — but 4.42x
+    # clears the 1.5x floor easily; VRT was blocked by the extension cap.
+    vrt = make_ticker(close=223.04, low_20d=259.19, high_20d=338.7,
+                      vol_ratio=4.44, pct_below_low_20d=13.95)
+    assert short_rules.blocking_gate(vrt) == short_rules.GATE_EXTENDED
+
+
+def test_blocking_gate_covers_each_rule():
+    assert short_rules.blocking_gate(make_ticker()) is None
+    assert short_rules.blocking_gate(make_ticker(vol_ratio=1.2)) == short_rules.GATE_VOLUME
+    assert short_rules.blocking_gate(
+        make_ticker(pct_below_low_20d=9.0)
+    ) == short_rules.GATE_EXTENDED
+    assert short_rules.blocking_gate(
+        make_ticker(high_20d=140.0)
+    ) == short_rules.GATE_CRASHED
+    assert short_rules.blocking_gate(
+        make_ticker(days_to_earnings=2)
+    ) == short_rules.GATE_EARNINGS
+    assert short_rules.blocking_gate(
+        make_ticker(days_to_earnings=None)
+    ) == short_rules.GATE_EARNINGS_UNKNOWN
+    assert short_rules.blocking_gate(make_ticker(atr14=None)) == short_rules.GATE_DATA
+
+
+def test_breakdown_report_lists_gates_not_assumptions():
+    snap = make_snapshot(
+        {
+            "VRT": make_ticker(pct_below_low_20d=13.95, vol_ratio=4.44),  # extended
+            "NVDA": make_ticker(vol_ratio=1.13),                          # low volume
+            "COHR": make_ticker(high_20d=400.0),                          # crashed
+            "ETN": make_ticker(days_to_earnings=2),                       # earnings
+            "AMD": make_ticker(close=200.0, low_20d=190.0),               # not broken down
+        }
+    )
+    report = {r["symbol"]: r["gate"] for r in short_rules.breakdown_report(snap)}
+    assert "AMD" not in report  # never made a new low, so not in the report
+    assert report["VRT"] == short_rules.GATE_EXTENDED
+    assert report["NVDA"] == short_rules.GATE_VOLUME
+    assert report["COHR"] == short_rules.GATE_CRASHED
+    assert report["ETN"] == short_rules.GATE_EARNINGS
+
+
+def test_report_and_candidates_never_disagree():
+    snap = make_snapshot(
+        {
+            "VRT": make_ticker(),                     # qualifies
+            "NVDA": make_ticker(vol_ratio=1.13),      # blocked
+        }
+    )
+    passing = {r["symbol"] for r in short_rules.breakdown_report(snap) if r["gate"] is None}
+    assert passing == {c["symbol"] for c in short_rules.generate_candidates(snap)}
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in tests:

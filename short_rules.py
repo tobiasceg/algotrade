@@ -42,21 +42,64 @@ def short_regime_on(market: dict) -> bool:
     return market["close"] < threshold
 
 
-def breakdown_watch(snapshot: dict) -> list[dict]:
-    """Names that closed below their prior 20-day low, strongest volume first.
+# Gate labels, in the order they are applied. Kept short: they are tallied
+# into the Telegram alert so a quiet night explains itself accurately.
+GATE_VOLUME = "low volume"
+GATE_EXTENDED = "too extended"
+GATE_CRASHED = "already crashed"
+GATE_EARNINGS = "near earnings"
+GATE_EARNINGS_UNKNOWN = "earnings date unknown"
+GATE_DATA = "incomplete data"
 
-    A diagnostic for the alert only — it says which names are the closest to
-    a valid short (the breakdown is there; usually the volume floor is what
-    they miss), so a quiet 'no setups' night still explains itself.
+
+def blocking_gate(t: dict) -> str | None:
+    """Which gate rejects this already-broken-down ticker, or None if it
+    passes every one. Single source of truth: generate_candidates and the
+    alert diagnostics both read the verdict from here, so the reported
+    reason can never drift from the real one."""
+    required = ("close", "low_20d", "high_20d", "vol_ratio", "atr14")
+    if any(t.get(k) is None for k in required):
+        return GATE_DATA
+
+    if t["vol_ratio"] < config.VOL_SURGE_MIN:
+        return GATE_VOLUME
+
+    pct_below = t.get("pct_below_low_20d")
+    if pct_below is None:
+        pct_below = round((1 - t["close"] / t["low_20d"]) * 100, 2)
+    if pct_below > config.MAX_BREAKDOWN_EXT_PCT:
+        return GATE_EXTENDED
+
+    crash_pct = round((1 - t["close"] / t["high_20d"]) * 100, 2)
+    if crash_pct > config.MAX_CRASH_FROM_HIGH_PCT:
+        return GATE_CRASHED
+
+    days_to_earnings = t.get("days_to_earnings")
+    if days_to_earnings is None:
+        return GATE_EARNINGS_UNKNOWN
+    if days_to_earnings <= config.SHORT_EARNINGS_BLOCK_DAYS:
+        return GATE_EARNINGS
+
+    if round(t["close"] - config.TARGET_ATR_MULT * t["atr14"], 2) <= 0:
+        return GATE_DATA
+
+    return None
+
+
+def breakdown_report(snapshot: dict) -> list[dict]:
+    """Every name that closed below its prior 20-day low, with the gate that
+    actually blocked it (None if it qualified).
+
+    Diagnostic for the alert. Reads its verdicts from blocking_gate, so it
+    reports the real reason rather than assuming one.
     """
-    watch = []
+    report = []
     for symbol, t in snapshot.get("tickers", {}).items():
         close, low_20d = t.get("close"), t.get("low_20d")
         if close is None or low_20d is None or close >= low_20d:
             continue
-        watch.append({"symbol": symbol, "vol_ratio": t.get("vol_ratio")})
-    watch.sort(key=lambda w: (w["vol_ratio"] is not None, w["vol_ratio"]), reverse=True)
-    return watch
+        report.append({"symbol": symbol, "gate": blocking_gate(t)})
+    return report
 
 
 def generate_candidates(snapshot: dict) -> list[dict]:
@@ -77,48 +120,26 @@ def generate_candidates(snapshot: dict) -> list[dict]:
 
     candidates = []
     for symbol, t in snapshot["tickers"].items():
-        required = ("close", "low_20d", "high_20d", "vol_ratio", "atr14")
-        if any(t.get(k) is None for k in required):
+        # Rule 2: breakdown close below the prior 20-day low. Everything
+        # that is not even a breakdown is silently uninteresting.
+        if t.get("close") is None or t.get("low_20d") is None:
             print(f"[short] {symbol}: incomplete data, skipped")
             continue
-
-        # Rule 2: breakdown close below the prior 20-day low
         if t["close"] >= t["low_20d"]:
             continue
-        # Rule 3: volume surge confirms the breakdown
-        if t["vol_ratio"] < config.VOL_SURGE_MIN:
+
+        # Rules 3-6 live in blocking_gate so the alert cannot misreport them.
+        gate = blocking_gate(t)
+        if gate is not None:
+            print(f"[short] {symbol}: {gate}, skipped")
             continue
-        # Rule 4: not already extended below the level
+
         pct_below = t.get("pct_below_low_20d")
         if pct_below is None:
             pct_below = round((1 - t["close"] / t["low_20d"]) * 100, 2)
-        if pct_below > config.MAX_BREAKDOWN_EXT_PCT:
-            continue
-        # Rule 5: the easy part of the move must not have happened already
         crash_pct = round((1 - t["close"] / t["high_20d"]) * 100, 2)
-        if crash_pct > config.MAX_CRASH_FROM_HIGH_PCT:
-            print(
-                f"[short] {symbol}: already down {crash_pct}% from 20d high "
-                f"(cap {config.MAX_CRASH_FROM_HIGH_PCT}%) — too late, skipped"
-            )
-            continue
-        # Rule 6: mechanical earnings block, fail-closed on unknown dates
-        days_to_earnings = t.get("days_to_earnings")
-        if days_to_earnings is None:
-            print(f"[short] {symbol}: earnings date unknown — fail closed, skipped")
-            continue
-        if days_to_earnings <= config.SHORT_EARNINGS_BLOCK_DAYS:
-            print(
-                f"[short] {symbol}: earnings in {days_to_earnings}d "
-                f"(block {config.SHORT_EARNINGS_BLOCK_DAYS}d) — skipped"
-            )
-            continue
-
         stop = round(t["close"] + config.STOP_ATR_MULT * t["atr14"], 2)
         target = round(t["close"] - config.TARGET_ATR_MULT * t["atr14"], 2)
-        if target <= 0:
-            print(f"[short] {symbol}: ATR too large for price, target <= 0 — skipped")
-            continue
 
         candidates.append(
             {
