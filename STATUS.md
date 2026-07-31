@@ -43,6 +43,12 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
 - **Timing probes live since Jul 11:** crons now fire 7 days/week; on market-closed
   days each firing logs `timing_probe` (slot, actual time, lag minutes) to the journal
   instead of exiting silently — building the lag/drop dataset for the scheduler decision.
+- **Data-freshness gate added Jul 31** (`data_fetch.py`): the expected signal bar
+  now comes from the NYSE calendar, the fetch retries once, stale tickers are dropped
+  and a stale benchmark aborts the entry run (alert + `snapshot_stale` journal event,
+  and deliberately no `entry_run` record so backup firings can retry). Fixes three
+  runs (Jul 15/27/29) that silently decided on two-day-old prices; Jul 29 missed a
+  valid VRT short because of it.
 - **Short book added Jul 18** (`short_rules.py`): mirror of the long rules, active only
   when QQQ is ≥1% BELOW its 50d MA (hysteresis; the two books are mutually exclusive).
   Deliberate asymmetries: half position size (5%), tighter extension cap (4% below the
@@ -104,6 +110,14 @@ GitHub secrets wired, repo pushed and crons activated.
   — harmless, zero positions). Redundancy beats aim.*
 - **Assuming GitHub cron is a clock.** It is a best-effort queue. All scheduler
   engineering this week flows from that mistake.
+- **Trusting the last row of a yfinance batch download to be the newest session.**
+  It silently isn't, roughly 1 day in 6 — three runs analysed two-day-old prices and
+  said nothing. *Lesson: every external feed needs an explicit freshness assertion;
+  "the data looked fine" is not an observation the code was ever making.*
+- **Explaining a decision with an assumed reason instead of the real one.** The
+  Jul 30 alert blamed weak volume for an empty short scan while naming a ticker with
+  4.42x volume. *Lesson: a diagnostic must read its verdict from the same code that
+  made the decision, never re-derive or guess it.*
 - Minor: `pip` not on PATH on this machine (use `python -m pip`); a stale test
   assertion after raising `MAX_WAIT` to 5h (5:00 AM ET became a legal sleep).
 
