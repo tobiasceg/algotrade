@@ -85,3 +85,4 @@
 {"ts": "2026-07-31T14:00:14+00:00", "event": "entry_run", "date": "2026-07-31", "dry_run": false, "book": "none", "books": [{"book": "long", "status": "idle \u2014 QQQ below 50d MA (risk-off)"}, {"book": "short", "status": "active \u2014 0 names below their 20d low"}], "market": {"benchmark": "QQQ", "close": 683.55, "ma50": 715.01, "above_trend": false}, "macro_events": [], "candidates": [], "veto": [], "placed": [], "rejected": []}
 {"ts": "2026-07-31T18:15:01+00:00", "event": "exit_run", "date": "2026-07-31", "dry_run": false, "actions": ["no open positions"]}
 {"ts": "2026-08-01T11:03:40+00:00", "event": "timing_probe", "date": "2026-08-01", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "11:03", "lag_minutes": 86.7}
+{"ts": "2026-08-01T11:47:30+00:00", "event": "timing_probe", "date": "2026-08-01", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "11:47", "lag_minutes": 70.5}
