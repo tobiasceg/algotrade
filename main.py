@@ -228,7 +228,15 @@ def run_entry(now_et: datetime) -> None:
         candidates, book = [], None
 
     # Per-book status for the alert, so a quiet night still says *why*.
+    # Computed before the staleness filter below, so it reports what the
+    # rules engine actually produced; anything dropped after this shows up
+    # as its own "skipped" line rather than vanishing.
     books = describe_books(m, long_candidates, short_consulted, short_candidates, snapshot)
+
+    # A signal is measured on the previous close. If the company reported
+    # after that close, the setup describes a company that has since
+    # repriced on fundamentals — drop it rather than trade a stale thesis.
+    candidates, stale_signals = data_fetch.drop_stale_signals(candidates, now_et)
 
     # Step 4: Claude veto — may only shrink the list, never expand it
     survivors, veto_decisions = veto.review(candidates, snapshot)
@@ -238,6 +246,7 @@ def run_entry(now_et: datetime) -> None:
     dry_run = tc is None
     account = dict(broker.SIM_ACCOUNT) if dry_run else broker.account_state(tc)
     approved, rejected = guardrails.apply(survivors, account)
+    rejected = stale_signals + rejected
 
     # Step 6: execution — bracket orders so exits exist from birth
     placed = []

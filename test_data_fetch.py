@@ -90,6 +90,71 @@ def test_fresh_bars_report_nothing_stale():
     assert data_fetch.stale_tickers(bars, date(2026, 7, 28)) == []
 
 
+def et(y, m, d, hh, mm=0):
+    return datetime(y, m, d, hh, mm, tzinfo=ET)
+
+
+def test_report_after_the_signal_bar_makes_it_stale():
+    # The live 2026-08-05 case: ANET reported at 16:00 ET on Aug 4, the very
+    # bar the breakout was measured on, then gapped 10% at Wednesday's open.
+    signal_close = data_fetch.session_close(date(2026, 8, 4))
+    assert data_fetch.signal_overtaken_by_earnings(
+        et(2026, 8, 4, 16, 0), signal_close, et(2026, 8, 5, 10, 0)
+    )
+
+
+def test_report_before_the_signal_bar_closed_is_fine():
+    # Reported pre-open on the signal day: that close already reflects the
+    # news, so the breakout is a legitimate post-earnings setup.
+    signal_close = data_fetch.session_close(date(2026, 8, 4))
+    assert not data_fetch.signal_overtaken_by_earnings(
+        et(2026, 8, 4, 8, 0), signal_close, et(2026, 8, 5, 10, 0)
+    )
+
+
+def test_future_report_is_not_stale():
+    signal_close = data_fetch.session_close(date(2026, 8, 4))
+    assert not data_fetch.signal_overtaken_by_earnings(
+        et(2026, 8, 27, 16, 0), signal_close, et(2026, 8, 5, 10, 0)
+    )
+
+
+def test_unknown_timestamp_keeps_the_candidate():
+    signal_close = data_fetch.session_close(date(2026, 8, 4))
+    assert not data_fetch.signal_overtaken_by_earnings(
+        None, signal_close, et(2026, 8, 5, 10, 0)
+    )
+
+
+def test_drop_stale_signals_splits_the_list():
+    cands = [
+        {"symbol": "ANET", "signal_date": "2026-08-04"},   # reported after
+        {"symbol": "NVDA", "signal_date": "2026-08-04"},   # reports later
+        {"symbol": "AVGO", "signal_date": "2026-08-04"},   # unknown
+    ]
+    stamps = {
+        "ANET": et(2026, 8, 4, 16, 0),
+        "NVDA": et(2026, 8, 26, 16, 0),
+        "AVGO": None,
+    }
+    kept, dropped = data_fetch.drop_stale_signals(
+        cands, et(2026, 8, 5, 10, 0), fetch=stamps.get
+    )
+    assert [c["symbol"] for c in kept] == ["NVDA", "AVGO"]
+    assert [d["symbol"] for d in dropped] == ["ANET"]
+    assert "stale" in dropped[0]["reason"] and "2026-08-04" in dropped[0]["reason"]
+
+
+def test_half_day_close_is_respected():
+    # 2026-11-27 is the day after Thanksgiving: a 13:00 ET close. A 14:00
+    # report is therefore AFTER that bar, though before a normal 16:00 close.
+    half = data_fetch.session_close(date(2026, 11, 27))
+    assert half.hour == 13, half
+    assert data_fetch.signal_overtaken_by_earnings(
+        et(2026, 11, 27, 14, 0), half, et(2026, 11, 30, 10, 0)
+    )
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in tests:

@@ -223,6 +223,80 @@ def fetch_earnings_date(ticker: yf.Ticker, today: date, sessions: list[date]) ->
         return unknown
 
 
+# ------------------------------------------- signals overtaken by earnings
+
+def earnings_timestamp(symbol: str) -> datetime | None:
+    """When this company most recently reported, in ET, or None if unknown.
+
+    Uses `info["earningsTimestamp"]` rather than the calendar: the calendar
+    rolls to the NEXT quarter the moment a report lands, which makes a
+    just-reported company look perfectly clean (2026-08-05: ANET reported
+    after Tuesday's close, and by Wednesday's run the calendar already
+    pointed at November). This field keeps the timestamp of the report that
+    actually happened, including its time of day.
+    """
+    try:
+        ts = yf.Ticker(symbol).info.get("earningsTimestamp")
+        if not ts:
+            return None
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).astimezone(ET)
+    except Exception as exc:  # noqa: BLE001 — scrape failure must not break the run
+        print(f"[earnings] WARNING {symbol}: timestamp lookup failed: {exc}")
+        return None
+
+
+def session_close(day: date) -> datetime:
+    """Closing bell for a session, in ET (handles 13:00 half-days)."""
+    sched = mcal.get_calendar("NYSE").schedule(start_date=day, end_date=day)
+    if sched.empty:
+        return datetime.combine(day, time(16, 0), tzinfo=ET)
+    return sched.iloc[0]["market_close"].tz_convert(ET).to_pydatetime()
+
+
+def signal_overtaken_by_earnings(earnings_et, signal_close, now_et) -> bool:
+    """Did a report land after the signal bar closed but before we acted?
+
+    If so the setup describes a company that has since published new
+    fundamentals — the breakout the rules engine measured is no longer the
+    trade it thinks it is proposing. A report BEFORE that bar closed is
+    fine: the close already reflects it, and a post-earnings breakout is a
+    legitimate setup.
+    """
+    if earnings_et is None:
+        return False
+    return signal_close <= earnings_et <= now_et
+
+
+def drop_stale_signals(candidates: list[dict], now_et: datetime, fetch=None):
+    """Split candidates into (still valid, overtaken by an earnings report).
+
+    Called only for names that already passed every rule, so this costs a
+    lookup or two on a typical day. An unavailable timestamp keeps the
+    candidate: this is a signal-quality filter, not a risk gate — the event
+    it detects has already happened, so there is no gap left to protect
+    against, and silently dropping trades on every scrape hiccup is worse.
+    """
+    fetch = fetch or earnings_timestamp
+    kept, dropped = [], []
+    for c in candidates:
+        ts = fetch(c["symbol"])
+        closed_at = session_close(date.fromisoformat(c["signal_date"]))
+        if signal_overtaken_by_earnings(ts, closed_at, now_et):
+            dropped.append(
+                {
+                    "symbol": c["symbol"],
+                    "reason": (
+                        f"reported {ts:%Y-%m-%d %H:%M} ET, after the "
+                        f"{c['signal_date']} signal bar — setup is stale"
+                    ),
+                }
+            )
+            print(f"[rules] {c['symbol']}: signal overtaken by earnings, dropped")
+        else:
+            kept.append(c)
+    return kept, dropped
+
+
 def fetch_news(ticker: yf.Ticker, now_utc: datetime) -> list[dict]:
     """Headlines from the last NEWS_HOURS for one ticker.
 
