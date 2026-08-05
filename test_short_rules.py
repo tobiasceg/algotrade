@@ -16,7 +16,8 @@ def make_ticker(**overrides) -> dict:
         "vol_ratio": 1.7,        # above the 1.5x volume floor
         "pct_below_low_20d": 1.94,
         "atr14": 2.80,
-        "days_to_earnings": 20,  # well outside the 5-day earnings block
+        "ma50": 108.00,          # below its own trend, as a short should be
+        "trading_days_to_earnings": 20,  # outside the 5-session earnings block
     }
     base.update(overrides)
     return base
@@ -82,12 +83,12 @@ def test_already_crashed_name_rejected():
 
 
 def test_earnings_block_enforced_in_code():
-    t = make_ticker(days_to_earnings=3)
+    t = make_ticker(trading_days_to_earnings=3)
     assert short_rules.generate_candidates(make_snapshot({"VRT": t})) == []
 
 
 def test_unknown_earnings_fails_closed():
-    t = make_ticker(days_to_earnings=None)
+    t = make_ticker(trading_days_to_earnings=None)
     assert short_rules.generate_candidates(make_snapshot({"VRT": t})) == []
 
 
@@ -126,12 +127,22 @@ def test_blocking_gate_covers_each_rule():
         make_ticker(high_20d=140.0)
     ) == short_rules.GATE_CRASHED
     assert short_rules.blocking_gate(
-        make_ticker(days_to_earnings=2)
+        make_ticker(trading_days_to_earnings=2)
     ) == short_rules.GATE_EARNINGS
     assert short_rules.blocking_gate(
-        make_ticker(days_to_earnings=None)
+        make_ticker(trading_days_to_earnings=None)
     ) == short_rules.GATE_EARNINGS_UNKNOWN
+    assert short_rules.blocking_gate(
+        make_ticker(ma50=90.0)
+    ) == short_rules.GATE_NAME_TREND
     assert short_rules.blocking_gate(make_ticker(atr14=None)) == short_rules.GATE_DATA
+
+
+def test_name_above_its_own_50d_ma_rejected():
+    # Breaking a 20-day low while still above its own 50-day MA is a pullback
+    # inside an uptrend — the worst kind of short.
+    t = make_ticker(ma50=90.0)   # close 96.10 is above it
+    assert short_rules.generate_candidates(make_snapshot({"VRT": t})) == []
 
 
 def test_breakdown_report_lists_gates_not_assumptions():
@@ -140,7 +151,7 @@ def test_breakdown_report_lists_gates_not_assumptions():
             "VRT": make_ticker(pct_below_low_20d=13.95, vol_ratio=4.44),  # extended
             "NVDA": make_ticker(vol_ratio=1.13),                          # low volume
             "COHR": make_ticker(high_20d=400.0),                          # crashed
-            "ETN": make_ticker(days_to_earnings=2),                       # earnings
+            "ETN": make_ticker(trading_days_to_earnings=2),                       # earnings
             "AMD": make_ticker(close=200.0, low_20d=190.0),               # not broken down
         }
     )
@@ -169,3 +180,4 @@ if __name__ == "__main__":
         fn()
         print(f"PASS {fn.__name__}")
     print(f"\n{len(tests)} tests passed")
+

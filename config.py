@@ -40,6 +40,21 @@ MAX_BREAKOUT_EXT_PCT = 5.0   # skip if close is more than this % above the
 STOP_ATR_MULT = 2.0          # stop  = close - 2.0 * ATR
 TARGET_ATR_MULT = 3.0        # target = close + 3.0 * ATR  (1.5 reward:risk)
 
+# Per-name trend filter: a candidate must be on the right side of its OWN
+# 50-day MA, not just the index's. The watchlist spans semiconductors and
+# datacenter power, which do not move together — on 2026-08-04 QQQ flipped
+# risk-on while only 13 of 24 names were above their own trend, so the index
+# gate alone can wave through a name that is still in its own downtrend.
+REQUIRE_NAME_TREND = True
+
+# Mechanical earnings block for LONGS, in trading days. Set to match the veto
+# layer's stated rule ("earnings within 2 trading days") so arm A and arm B
+# block the same trades — if the code and the AI used different windows, the
+# arms would differ for a reason that has nothing to do with AI judgment.
+# Unknown earnings date does NOT block a long (unlike a short): the scrape
+# misses ~10-15% of names, and a long's downside is bounded and size-capped.
+LONG_EARNINGS_BLOCK_DAYS = 2
+
 # Hard guardrails (step 5) — enforced by code AFTER any AI approval
 MAX_POSITION_PCT = 0.10      # max fraction of equity in one position
 MAX_NEW_TRADES_PER_DAY = 2   # new entries per day, across all runs
@@ -62,7 +77,7 @@ MAX_BREAKDOWN_EXT_PCT = 4.0     # skip if close is more than this % below the
                                 # 20-day low (tighter than the long side's 5)
 MAX_CRASH_FROM_HIGH_PCT = 25.0  # don't short a name already down this much
                                 # from its 20d high — the easy move happened
-SHORT_EARNINGS_BLOCK_DAYS = 5   # mechanical earnings block, enforced in code
+SHORT_EARNINGS_BLOCK_DAYS = 5   # mechanical earnings block, in TRADING days
                                 # (a gap up through a short's stop is the
                                 # worst case in the book; unknown date = skip)
 MAX_SHORT_POSITION_PCT = 0.05   # half the long size, same reasoning

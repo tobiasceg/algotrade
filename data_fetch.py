@@ -167,27 +167,60 @@ def load_macro_events(today: date) -> list[dict]:
     return upcoming
 
 
-def fetch_earnings_date(ticker: yf.Ticker, today: date) -> dict:
+def upcoming_sessions(today: date, horizon_days: int = 200) -> list[date]:
+    """NYSE session dates from today forward — computed once per snapshot so
+    the per-ticker earnings maths costs nothing."""
+    sched = mcal.get_calendar("NYSE").schedule(
+        start_date=today, end_date=today + timedelta(days=horizon_days)
+    )
+    return [d.date() for d in sched.index]
+
+
+def trading_days_until(target: date, sessions: list[date]) -> int | None:
+    """Sessions between now and an earnings date.
+
+    Calendar days mis-measure this across weekends — a Thursday run facing
+    Monday earnings is 4 calendar days but only 2 trading days away, which is
+    exactly the case an earnings block must catch. Returns None when the date
+    is beyond the horizon.
+    """
+    if not sessions:
+        return None
+    if target > sessions[-1]:
+        return None
+    return sum(1 for s in sessions if s < target)
+
+
+def fetch_earnings_date(ticker: yf.Ticker, today: date, sessions: list[date]) -> dict:
     """Next scheduled earnings date for one ticker, or None if unknown.
 
     yfinance earnings data is scraped and occasionally missing — treat an
     unknown date as a fact worth surfacing (the veto prompt can see
     "earnings_date": null and weigh that), never as a crash.
+
+    Reports both calendar distance (for humans and the veto payload) and
+    trading-day distance, which is what the mechanical gates actually use.
     """
+    unknown = {
+        "earnings_date": None,
+        "days_to_earnings": None,
+        "trading_days_to_earnings": None,
+    }
     try:
         cal = ticker.calendar or {}
         dates = cal.get("Earnings Date") or []
         future = sorted(d for d in dates if d >= today)
         if not future:
-            return {"earnings_date": None, "days_to_earnings": None}
+            return unknown
         nxt = future[0]
         return {
             "earnings_date": nxt.isoformat(),
             "days_to_earnings": (nxt - today).days,
+            "trading_days_to_earnings": trading_days_until(nxt, sessions),
         }
     except Exception as exc:  # noqa: BLE001 — third-party scrape, any failure is non-fatal
         print(f"[earnings] WARNING {ticker.ticker}: {exc}")
-        return {"earnings_date": None, "days_to_earnings": None}
+        return unknown
 
 
 def fetch_news(ticker: yf.Ticker, now_utc: datetime) -> list[dict]:
@@ -289,13 +322,15 @@ def build_snapshot() -> dict:
 
     macro_events = load_macro_events(today)
 
+    sessions = upcoming_sessions(today)
+
     tickers_out = {}
     for symbol in config.WATCHLIST:
         if symbol not in bars:
             continue
         entry = compute_indicators(bars[symbol])
         yft = yf.Ticker(symbol)
-        entry.update(fetch_earnings_date(yft, today))
+        entry.update(fetch_earnings_date(yft, today, sessions))
         entry["news"] = fetch_news(yft, now_utc)
         tickers_out[symbol] = entry
         time_mod.sleep(0.3)  # be polite to Yahoo; ~25 tickers stays under a minute

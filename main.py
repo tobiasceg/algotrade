@@ -298,17 +298,36 @@ def describe_books(m, long_candidates, short_consulted, short_candidates, snapsh
     entry is {"book", "status"} where status is a short phrase.
     """
     import config
+    import rules
     import short_rules
 
     if not m:
         return [{"book": "long", "status": "regime unknown — no benchmark data"}]
 
-    # Long book: gated purely on the trend filter.
-    if m["above_trend"]:
-        n = len(long_candidates)
-        long_status = f"active — {n} candidate(s)" if n else "active — no breakouts"
-    else:
+    def tally(report: list[dict]) -> str:
+        counts: dict[str, int] = {}
+        for r in report:
+            if r["gate"]:
+                counts[r["gate"]] = counts.get(r["gate"], 0) + 1
+        return ", ".join(
+            f"{n} {gate}" for gate, n in sorted(counts.items(), key=lambda kv: -kv[1])
+        )
+
+    # Long book: gated first on the index trend filter.
+    if not m["above_trend"]:
         long_status = f"idle — {m['benchmark']} below 50d MA (risk-off)"
+    elif long_candidates:
+        long_status = f"active — {len(long_candidates)} candidate(s)"
+    else:
+        report = rules.breakout_report(snapshot)
+        if not report:
+            long_status = "active — no breakouts"
+        else:
+            detail = tally(report)
+            long_status = (
+                f"active — {len(report)} broke out, none qualified"
+                + (f" ({detail})" if detail else "")
+            )
 
     # Short book: only consulted when the long book came up empty.
     if not short_consulted:
@@ -331,13 +350,7 @@ def describe_books(m, long_candidates, short_consulted, short_candidates, snapsh
         if not report:
             short_status = "active — 0 names below their 20d low"
         else:
-            tally: dict[str, int] = {}
-            for r in report:
-                if r["gate"]:
-                    tally[r["gate"]] = tally.get(r["gate"], 0) + 1
-            detail = ", ".join(
-                f"{n} {gate}" for gate, n in sorted(tally.items(), key=lambda kv: -kv[1])
-            )
+            detail = tally(report)
             short_status = (
                 f"active — {len(report)} below 20d low, none qualified"
                 + (f" ({detail})" if detail else "")

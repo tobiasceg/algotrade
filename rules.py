@@ -7,6 +7,12 @@ Reads the daily JSON snapshot and applies the entry criteria:
   3. Conviction: breakout volume >= 1.5x the 20-day average.
   4. Not extended: close no more than 5% above the 20-day high
      (a huge gap has already spent the move — chasing it ruins reward:risk).
+  5. Own trend: the name itself above its 50-day MA. The index gate cannot
+     speak for both semiconductors and datacenter power.
+  6. Earnings block: no entry within LONG_EARNINGS_BLOCK_DAYS trading days
+     of a scheduled report. A gap through the stop is the one thing a
+     bracket cannot protect against, and this must hold in arm A too,
+     where there is no veto layer to catch it.
 
 Survivors become candidate BUYs with ATR-sized stops and targets, ranked by
 volume ratio (strongest conviction first). Many days the list is empty —
@@ -22,6 +28,55 @@ import sys
 from pathlib import Path
 
 import config
+
+
+# Gate labels, in the order applied. Tallied into the Telegram alert, so a
+# night where names broke out but nothing traded explains itself accurately.
+GATE_VOLUME = "low volume"
+GATE_EXTENDED = "too extended"
+GATE_NAME_TREND = "below own 50d MA"
+GATE_EARNINGS = "near earnings"
+GATE_DATA = "incomplete data"
+
+
+def blocking_gate(t: dict) -> str | None:
+    """Which gate rejects this already-broken-out ticker, or None if it
+    passes every one. Single source of truth: generate_candidates and the
+    alert diagnostics both read the verdict from here, so the reported
+    reason can never drift from the real one."""
+    required = ("close", "high_20d", "vol_ratio", "atr14")
+    if any(t.get(k) is None for k in required):
+        return GATE_DATA
+
+    if t["vol_ratio"] < config.VOL_SURGE_MIN:
+        return GATE_VOLUME
+
+    if t["pct_above_high_20d"] > config.MAX_BREAKOUT_EXT_PCT:
+        return GATE_EXTENDED
+
+    if config.REQUIRE_NAME_TREND:
+        ma50 = t.get("ma50")
+        if ma50 is None or t["close"] <= ma50:
+            return GATE_NAME_TREND
+
+    # Unknown earnings date deliberately does NOT block a long — see config.
+    ted = t.get("trading_days_to_earnings")
+    if ted is not None and ted <= config.LONG_EARNINGS_BLOCK_DAYS:
+        return GATE_EARNINGS
+
+    return None
+
+
+def breakout_report(snapshot: dict) -> list[dict]:
+    """Every name that closed above its prior 20-day high, with the gate that
+    actually blocked it (None if it qualified). Diagnostic for the alert."""
+    report = []
+    for symbol, t in snapshot.get("tickers", {}).items():
+        close, high_20d = t.get("close"), t.get("high_20d")
+        if close is None or high_20d is None or close <= high_20d:
+            continue
+        report.append({"symbol": symbol, "gate": blocking_gate(t)})
+    return report
 
 
 def generate_candidates(snapshot: dict) -> list[dict]:
@@ -41,19 +96,18 @@ def generate_candidates(snapshot: dict) -> list[dict]:
 
     candidates = []
     for symbol, t in snapshot["tickers"].items():
-        required = ("close", "high_20d", "vol_ratio", "atr14")
-        if any(t.get(k) is None for k in required):
+        # Rule 2: breakout close above the prior 20-day high. Anything that
+        # is not even a breakout is silently uninteresting.
+        if t.get("close") is None or t.get("high_20d") is None:
             print(f"[rules] {symbol}: incomplete data, skipped")
             continue
-
-        # Rule 2: breakout close above the prior 20-day high
         if t["close"] <= t["high_20d"]:
             continue
-        # Rule 3: volume surge confirms the breakout
-        if t["vol_ratio"] < config.VOL_SURGE_MIN:
-            continue
-        # Rule 4: not already extended past the level
-        if t["pct_above_high_20d"] > config.MAX_BREAKOUT_EXT_PCT:
+
+        # Rules 3-6 live in blocking_gate so the alert cannot misreport them.
+        gate = blocking_gate(t)
+        if gate is not None:
+            print(f"[rules] {symbol}: {gate}, skipped")
             continue
 
         stop = round(t["close"] - config.STOP_ATR_MULT * t["atr14"], 2)

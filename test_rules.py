@@ -16,6 +16,8 @@ def make_ticker(**overrides) -> dict:
         "vol_ratio": 1.6,      # above the 1.5x volume floor
         "pct_above_high_20d": 1.2,
         "atr14": 3.15,
+        "ma50": 128.00,        # comfortably in its own uptrend
+        "trading_days_to_earnings": 20,   # well outside the 2-session block
     }
     base.update(overrides)
     return base
@@ -67,6 +69,56 @@ def test_risk_off_market_blocks_everything():
 def test_missing_data_skipped_not_crashed():
     t = make_ticker(atr14=None)
     assert rules.generate_candidates(make_snapshot({"VRT": t})) == []
+
+
+def test_name_below_its_own_50d_ma_rejected():
+    # QQQ can be risk-on while a name is still in its own downtrend — the
+    # 2026-08-04 case, where only 13 of 24 names were above their own MA.
+    t = make_ticker(ma50=150.0)   # close 142.10 is below it
+    assert rules.generate_candidates(make_snapshot({"VRT": t})) == []
+    assert rules.blocking_gate(t) == rules.GATE_NAME_TREND
+
+
+def test_earnings_within_the_block_rejected():
+    # ANET on 2026-08-05: a clean breakout reporting the same day, with no
+    # veto layer in arm A to catch it.
+    t = make_ticker(trading_days_to_earnings=0)
+    assert rules.generate_candidates(make_snapshot({"ANET": t})) == []
+    assert rules.blocking_gate(t) == rules.GATE_EARNINGS
+    assert rules.blocking_gate(make_ticker(trading_days_to_earnings=2)) == rules.GATE_EARNINGS
+    assert rules.blocking_gate(make_ticker(trading_days_to_earnings=3)) is None
+
+
+def test_unknown_earnings_does_not_block_a_long():
+    # Unlike a short: the scrape misses ~10-15% of names and a long's
+    # downside is bounded, so an unknown date must not silently kill trades.
+    t = make_ticker(trading_days_to_earnings=None)
+    assert rules.blocking_gate(t) is None
+    assert len(rules.generate_candidates(make_snapshot({"VRT": t}))) == 1
+
+
+def test_breakout_report_names_the_real_gate():
+    snap = make_snapshot(
+        {
+            "ANET": make_ticker(trading_days_to_earnings=0),   # earnings
+            "AVGO": make_ticker(vol_ratio=1.46),               # volume
+            "NVDA": make_ticker(ma50=150.0),                   # own downtrend
+            "MU": make_ticker(close=139.0, pct_above_high_20d=-1.0),  # no breakout
+        }
+    )
+    report = {r["symbol"]: r["gate"] for r in rules.breakout_report(snap)}
+    assert "MU" not in report  # never broke out, so not in the report
+    assert report["ANET"] == rules.GATE_EARNINGS
+    assert report["AVGO"] == rules.GATE_VOLUME
+    assert report["NVDA"] == rules.GATE_NAME_TREND
+
+
+def test_report_and_candidates_never_disagree():
+    snap = make_snapshot(
+        {"VRT": make_ticker(), "ANET": make_ticker(trading_days_to_earnings=1)}
+    )
+    passing = {r["symbol"] for r in rules.breakout_report(snap) if r["gate"] is None}
+    assert passing == {c["symbol"] for c in rules.generate_candidates(snap)}
 
 
 def test_ranked_by_volume_conviction():

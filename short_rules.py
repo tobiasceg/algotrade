@@ -47,6 +47,7 @@ def short_regime_on(market: dict) -> bool:
 GATE_VOLUME = "low volume"
 GATE_EXTENDED = "too extended"
 GATE_CRASHED = "already crashed"
+GATE_NAME_TREND = "above own 50d MA"
 GATE_EARNINGS = "near earnings"
 GATE_EARNINGS_UNKNOWN = "earnings date unknown"
 GATE_DATA = "incomplete data"
@@ -74,7 +75,17 @@ def blocking_gate(t: dict) -> str | None:
     if crash_pct > config.MAX_CRASH_FROM_HIGH_PCT:
         return GATE_CRASHED
 
-    days_to_earnings = t.get("days_to_earnings")
+    # Mirror of the long trend filter: a name breaking a 20-day low while
+    # still above its own 50-day MA is a pullback in an uptrend, not a
+    # breakdown — the worst kind of short.
+    if config.REQUIRE_NAME_TREND:
+        ma50 = t.get("ma50")
+        if ma50 is None or t["close"] >= ma50:
+            return GATE_NAME_TREND
+
+    # Trading days, not calendar days: Thursday -> Monday earnings is 4
+    # calendar days but only 2 sessions away.
+    days_to_earnings = t.get("trading_days_to_earnings")
     if days_to_earnings is None:
         return GATE_EARNINGS_UNKNOWN
     if days_to_earnings <= config.SHORT_EARNINGS_BLOCK_DAYS:
