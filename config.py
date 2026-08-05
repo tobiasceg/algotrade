@@ -67,6 +67,16 @@ MAX_ENTRY_SLIP_PCT = 2.0     # entry is a DAY limit this % above signal close;
 MAX_HOLD_DAYS = 5            # time stop, in trading days; momentum trades
                              # that go nowhere get closed, not babysat
 
+# Close any open position ahead of its earnings report. The entry blocks stop
+# us OPENING near earnings, but a 5-day hold can still swallow a report that
+# was 3+ sessions away at entry (~8% of trades, given quarterly reporting).
+# An earnings gap opens straight through a bracket stop, so this is the only
+# protection that works against it.
+EXIT_BEFORE_EARNINGS = True
+EXIT_BEFORE_EARNINGS_DAYS = 2   # trading days. Two, not one, so that a single
+                                # dropped exit run (it has happened — Jul 9)
+                                # still leaves tomorrow's pass time to act.
+
 # Short book — mirror of the long rules, active only in a risk-off regime.
 # Deliberately NOT a perfect mirror: down moves overshoot and snap back
 # harder, gaps go through stops, and squeezes exist, so every asymmetry

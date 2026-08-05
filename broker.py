@@ -157,6 +157,32 @@ def shortable(tc, symbol: str) -> bool:
         return False
 
 
+def trading_days_to_earnings(symbol: str, today: date) -> int | None:
+    """Sessions until this symbol's next scheduled report, or None if unknown.
+
+    Fetched fresh rather than read from the entry snapshot: the exit run is a
+    separate CI job on a clean runner (no snapshot file), and an earnings date
+    can be scheduled after the position was opened. Only ever called for
+    symbols actually held, so it is a handful of calls at most.
+    """
+    try:
+        import yfinance as yf
+
+        import data_fetch
+
+        cal = yf.Ticker(symbol).calendar or {}
+        dates = cal.get("Earnings Date") or []
+        future = sorted(d for d in dates if d >= today)
+        if not future:
+            return None
+        return data_fetch.trading_days_until(
+            future[0], data_fetch.upcoming_sessions(today)
+        )
+    except Exception as exc:  # noqa: BLE001 — a scrape failure must not break exits
+        print(f"[exit] earnings lookup failed for {symbol}: {exc}")
+        return None
+
+
 def _trading_days_held(entry_date: date, today: date) -> int:
     sched = mcal.get_calendar("NYSE").schedule(start_date=entry_date, end_date=today)
     return max(len(sched) - 1, 0)
@@ -180,6 +206,16 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
         ]
         entry_rec = journal.last_order_for(symbol)
 
+        def close_out(reason: str) -> None:
+            """Cancel any resting bracket legs, then flatten at market."""
+            for o in live:
+                try:
+                    tc.cancel_order_by_id(str(o.id))
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[exit] cancel {symbol} {o.id}: {exc}")
+            tc.close_position(symbol)
+            actions.append(reason)
+
         # --- time stop ---------------------------------------------------
         # Shorts get a shorter leash: bear-market rallies are violent.
         max_hold = config.SHORT_MAX_HOLD_DAYS if is_short else config.MAX_HOLD_DAYS
@@ -188,19 +224,33 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
                 date.fromisoformat(entry_rec["signal_date"]), now_et.date()
             )
             if held >= max_hold:
-                for o in live:
-                    try:
-                        tc.cancel_order_by_id(str(o.id))
-                    except Exception as exc:  # noqa: BLE001
-                        print(f"[exit] cancel {symbol} {o.id}: {exc}")
-                tc.close_position(symbol)
-                actions.append(
+                close_out(
                     f"TIME EXIT {symbol}{' (short)' if is_short else ''}: "
                     f"held {held} trading days (max {max_hold}), closed at market"
                 )
                 continue
         else:
             actions.append(f"WARNING {symbol}: no journal entry — age unknown, time stop skipped")
+
+        # --- earnings exit -------------------------------------------------
+        # The entry gates stop us opening near a report, but a hold can still
+        # run into one. Being flat is the only defence against a gap, which
+        # opens through a stop rather than at it.
+        if config.EXIT_BEFORE_EARNINGS:
+            ted = trading_days_to_earnings(symbol, now_et.date())
+            if ted is None:
+                # Deliberately do NOT flatten on an unknown date: closing a
+                # working position every time a scrape hiccups is worse than
+                # the residual risk the entry gate already screens for.
+                actions.append(
+                    f"WARNING {symbol}: earnings date unknown — cannot verify, holding"
+                )
+            elif ted <= config.EXIT_BEFORE_EARNINGS_DAYS:
+                close_out(
+                    f"EARNINGS EXIT {symbol}{' (short)' if is_short else ''}: "
+                    f"reports in {ted} session(s), closed at market"
+                )
+                continue
 
         # --- stop audit ---------------------------------------------------
         # A long is protected by a SELL stop below; a short by a BUY stop above.

@@ -43,6 +43,15 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
 - **Timing probes live since Jul 11:** crons now fire 7 days/week; on market-closed
   days each firing logs `timing_probe` (slot, actual time, lag minutes) to the journal
   instead of exiting silently — building the lag/drop dataset for the scheduler decision.
+- **Earnings protection + per-name trend filter added Aug 5.** Longs now have a
+  mechanical earnings block (2 trading days, matching the veto prompt so arms A and B
+  block identically; unknown date does *not* block a long), and every candidate must
+  be on the right side of its **own** 50-day MA — QQQ flipped risk-on Aug 4 with only
+  13 of 24 names above their own trend. Earnings distance is counted in **trading**
+  days (Thu→Mon is 4 calendar days but 2 sessions). The exit pass also flattens any
+  position within 2 sessions of its report, since a gap opens *through* a bracket
+  stop. Caught the first live case: ANET broke out cleanly on Aug 5 and was blocked
+  for reporting that day.
 - **Data-freshness gate added Jul 31** (`data_fetch.py`): the expected signal bar
   now comes from the NYSE calendar, the fetch retries once, stale tickers are dropped
   and a stale benchmark aborts the entry run (alert + `snapshot_stale` journal event,
@@ -70,7 +79,7 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
 | `short_rules.py` | Short-side mirror: breakdown rules, risk-off regime gate with 1% hysteresis, crash cap, mechanical earnings block |
 | `veto.py` | Claude APPROVE/VETO screen (claude-opus-4-8, structured outputs, fail-closed; skips = arm A) |
 | `guardrails.py` | Pure-code limits: whitelist, 10%/position, 2 trades/day, 20% cash floor, sizing |
-| `broker.py` | Alpaca paper: bracket orders (limit +2% cap), exit checks (5-day time stop, stop audit/re-attach) |
+| `broker.py` | Alpaca paper: bracket orders (limit +2% cap), exit checks (time stop, earnings exit, stop audit/re-attach), shortable check |
 | `notify.py` | Telegram, fail-soft |
 | `journal.py` | Append-only `journal.jsonl` + `already_ran` dedupe + `last_order_for` |
 | `macro_calendar.json` | 2026 FOMC/CPI dates (verified vs Fed/BLS) — refresh each January |
