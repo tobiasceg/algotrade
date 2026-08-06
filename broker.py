@@ -188,6 +188,33 @@ def _trading_days_held(entry_date: date, today: date) -> int:
     return max(len(sched) - 1, 0)
 
 
+def _pos_float(p, attr: str):
+    """Read a numeric field off a position, tolerating missing/odd values."""
+    try:
+        value = getattr(p, attr, None)
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _holding_status(p, symbol: str, is_short: bool, held, max_hold: int, ted) -> str:
+    """One line describing a position that needed no action today."""
+    bits = [f"{symbol}{' (short)' if is_short else ''}: holding"]
+    bits.append(f"day {held} of {max_hold}" if held is not None else "age unknown")
+
+    plpc = _pos_float(p, "unrealized_plpc")
+    entry = _pos_float(p, "avg_entry_price")
+    current = _pos_float(p, "current_price")
+    if plpc is not None:
+        bits.append(f"{plpc * 100:+.1f}%")
+    if entry is not None and current is not None:
+        bits.append(f"entry {entry:.2f} -> {current:.2f}")
+    if ted is not None:
+        bits.append(f"earnings in {ted}")
+    bits.append("stop ok")
+    return ", ".join(bits)
+
+
 def exit_checks(tc, now_et: datetime) -> list[str]:
     """Mechanical pre-close pass. Returns human-readable action lines."""
     actions: list[str] = []
@@ -219,6 +246,7 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
         # --- time stop ---------------------------------------------------
         # Shorts get a shorter leash: bear-market rallies are violent.
         max_hold = config.SHORT_MAX_HOLD_DAYS if is_short else config.MAX_HOLD_DAYS
+        held = None
         if entry_rec and entry_rec.get("signal_date"):
             held = _trading_days_held(
                 date.fromisoformat(entry_rec["signal_date"]), now_et.date()
@@ -236,6 +264,7 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
         # The entry gates stop us opening near a report, but a hold can still
         # run into one. Being flat is the only defence against a gap, which
         # opens through a stop rather than at it.
+        ted = None
         if config.EXIT_BEFORE_EARNINGS:
             ted = trading_days_to_earnings(symbol, now_et.date())
             if ted is None:
@@ -279,5 +308,10 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
                 actions.append(
                     f"ALERT {symbol}: NO STOP and none in journal — needs manual attention"
                 )
+        else:
+            # Nothing needed doing — say so anyway. A silent exit run reads
+            # identically whether a position is healthy or was never looked
+            # at, which is no use to anyone reading it at 2:15 AM.
+            actions.append(_holding_status(p, symbol, is_short, held, max_hold, ted))
 
     return actions

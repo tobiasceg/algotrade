@@ -19,8 +19,12 @@ NOW = datetime(2026, 8, 5, 14, 15, tzinfo=ET)
 
 
 class Position:
-    def __init__(self, symbol, qty):
+    def __init__(self, symbol, qty, avg_entry_price=194.10, current_price=195.51,
+                 unrealized_plpc=0.00727):
         self.symbol, self.qty = symbol, str(qty)
+        self.avg_entry_price = str(avg_entry_price)
+        self.current_price = str(current_price)
+        self.unrealized_plpc = str(unrealized_plpc)
 
 
 class Order:
@@ -134,6 +138,50 @@ def test_earnings_exit_can_be_switched_off():
 def test_no_positions_is_a_clean_no_op():
     setup()
     assert broker.exit_checks(FakeClient([]), NOW) == ["no open positions"]
+
+
+def test_healthy_position_reports_a_status_line():
+    # A silent exit run reads the same whether a position is fine or was
+    # never checked. The Aug 5 run logged an empty action list while holding
+    # ANET; it must now say what it found.
+    stop = Order("ANET", "stop-1", side="sell", type_="stop")
+    setup(earnings_in=63, orders=[stop])
+    tc = FakeClient([Position("ANET", 51)])
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.closed == [] and actions != []
+    line = actions[0]
+    assert "ANET: holding" in line, line
+    assert "day 1 of 5" in line, line
+    assert "+0.7%" in line, line
+    assert "194.10 -> 195.51" in line, line
+    assert "earnings in 63" in line, line
+    assert "stop ok" in line, line
+
+
+def test_status_line_marks_a_short():
+    stop = Order("TSM", "stop-1", side="buy", type_="stop")
+    setup(earnings_in=40, orders=[stop])
+    tc = FakeClient([Position("TSM", -12)])
+    line = broker.exit_checks(tc, NOW)[0]
+    assert "TSM (short): holding" in line, line
+    assert "day 1 of 3" in line, line   # shorts use the shorter leash
+
+
+def test_status_line_survives_missing_price_fields():
+    class Bare:
+        symbol, qty = "ANET", "51"
+
+    stop = Order("ANET", "stop-1", side="sell", type_="stop")
+    setup(earnings_in=10, orders=[stop])
+    line = broker.exit_checks(FakeClient([Bare()]), NOW)[0]
+    assert "ANET: holding" in line and "stop ok" in line, line
+
+
+def test_no_status_line_when_an_exit_fired():
+    setup(earnings_in=1)
+    tc = FakeClient([Position("ANET", 51)])
+    actions = broker.exit_checks(tc, NOW)
+    assert all("holding" not in a for a in actions), actions
 
 
 def test_stop_audit_reattaches_when_protection_is_missing():
