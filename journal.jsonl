@@ -112,3 +112,4 @@
 {"ts": "2026-08-07T18:15:02+00:00", "event": "exit_run", "date": "2026-08-07", "dry_run": false, "actions": ["STOP RE-ATTACHED ANET @ 170.67 (was unprotected!)"]}
 {"ts": "2026-08-08T10:04:51+00:00", "event": "timing_probe", "date": "2026-08-08", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "10:04", "lag_minutes": 27.9}
 {"ts": "2026-08-08T11:03:58+00:00", "event": "timing_probe", "date": "2026-08-08", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "11:03", "lag_minutes": 27.0}
+{"ts": "2026-08-08T13:51:22+00:00", "event": "timing_probe", "date": "2026-08-08", "mode": "entry", "cron": "7 13 * * *", "scheduled_utc": "13:07", "actual_utc": "13:51", "lag_minutes": 44.4}
