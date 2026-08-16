@@ -150,3 +150,4 @@
 {"ts": "2026-08-16T10:54:30+00:00", "event": "timing_probe", "date": "2026-08-16", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "10:54", "lag_minutes": 17.5}
 {"ts": "2026-08-16T13:38:37+00:00", "event": "timing_probe", "date": "2026-08-16", "mode": "entry", "cron": "7 13 * * *", "scheduled_utc": "13:07", "actual_utc": "13:38", "lag_minutes": 31.6}
 {"ts": "2026-08-16T13:54:43+00:00", "event": "timing_probe", "date": "2026-08-16", "mode": "exit", "cron": "37 13 * * *", "scheduled_utc": "13:37", "actual_utc": "13:54", "lag_minutes": 17.7}
+{"ts": "2026-08-16T15:49:45+00:00", "event": "timing_probe", "date": "2026-08-16", "mode": "entry", "cron": "37 15 * * *", "scheduled_utc": "15:37", "actual_utc": "15:49", "lag_minutes": 12.8}
