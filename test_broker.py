@@ -29,10 +29,19 @@ class Position:
 
 class Order:
     def __init__(self, symbol, order_id="o1", side="sell", type_="stop",
-                 status="new"):
+                 status="new", qty=51, legs=None):
         self.symbol, self.id, self.side = symbol, order_id, side
         self.type, self.order_type, self.status = type_, type_, status
-        self.legs = []
+        self.qty = str(qty)
+        self.legs = legs if legs is not None else []
+
+
+def protection(symbol, qty=51, side="sell"):
+    """A healthy pair of resting exits: stop plus target."""
+    return [
+        Order(symbol, "stop-1", side=side, type_="stop", qty=qty),
+        Order(symbol, "tgt-1", side=side, type_="limit", qty=qty),
+    ]
 
 
 class FakeClient:
@@ -46,7 +55,11 @@ class FakeClient:
     def get_all_positions(self):
         return self._positions
 
+    cancel_fails = ()
+
     def cancel_order_by_id(self, order_id):
+        if order_id in self.cancel_fails:
+            raise RuntimeError(f"cannot cancel {order_id}")
         self.cancelled.append(order_id)
 
     def close_position(self, symbol):
@@ -63,7 +76,9 @@ def setup(entry_days_ago=1, earnings_in=None, orders=()):
     broker.trading_days_to_earnings = lambda symbol, today: earnings_in
     # An entry recent enough that the time stop is not what fires.
     signal = "2026-08-04" if entry_days_ago <= 1 else "2026-07-20"
-    journal.last_order_for = lambda symbol: {"signal_date": signal, "stop": 100.0}
+    journal.last_order_for = lambda symbol: {
+        "signal_date": signal, "stop": 100.0, "target": 220.0,
+    }
 
 
 def test_earnings_exit_closes_the_position():
@@ -144,8 +159,7 @@ def test_healthy_position_reports_a_status_line():
     # A silent exit run reads the same whether a position is fine or was
     # never checked. The Aug 5 run logged an empty action list while holding
     # ANET; it must now say what it found.
-    stop = Order("ANET", "stop-1", side="sell", type_="stop")
-    setup(earnings_in=63, orders=[stop])
+    setup(earnings_in=63, orders=protection("ANET"))
     tc = FakeClient([Position("ANET", 51)])
     actions = broker.exit_checks(tc, NOW)
     assert tc.closed == [] and actions != []
@@ -155,12 +169,11 @@ def test_healthy_position_reports_a_status_line():
     assert "+0.7%" in line, line
     assert "194.10 -> 195.51" in line, line
     assert "earnings in 63" in line, line
-    assert "stop ok" in line, line
+    assert "stop+target ok" in line, line
 
 
 def test_status_line_marks_a_short():
-    stop = Order("TSM", "stop-1", side="buy", type_="stop")
-    setup(earnings_in=40, orders=[stop])
+    setup(earnings_in=40, orders=protection("TSM", qty=12, side="buy"))
     tc = FakeClient([Position("TSM", -12)])
     line = broker.exit_checks(tc, NOW)[0]
     assert "TSM (short): holding" in line, line
@@ -171,10 +184,9 @@ def test_status_line_survives_missing_price_fields():
     class Bare:
         symbol, qty = "ANET", "51"
 
-    stop = Order("ANET", "stop-1", side="sell", type_="stop")
-    setup(earnings_in=10, orders=[stop])
+    setup(earnings_in=10, orders=protection("ANET"))
     line = broker.exit_checks(FakeClient([Bare()]), NOW)[0]
-    assert "ANET: holding" in line and "stop ok" in line, line
+    assert "ANET: holding" in line and "stop+target ok" in line, line
 
 
 def test_no_status_line_when_an_exit_fired():
@@ -184,14 +196,79 @@ def test_no_status_line_when_an_exit_fired():
     assert all("holding" not in a for a in actions), actions
 
 
-def test_stop_audit_reattaches_when_protection_is_missing():
-    # No resting orders at all: the audit must put a stop back on.
+def test_audit_reattaches_when_all_protection_is_missing():
+    # The Aug 17 case: legs expired overnight, nothing resting at all.
     setup(earnings_in=30)
     tc = FakeClient([Position("ANET", 51)])
     actions = broker.exit_checks(tc, NOW)
     assert tc.closed == []
-    assert len(tc.submitted) == 1
-    assert any("STOP RE-ATTACHED" in a for a in actions), actions
+    assert len(tc.submitted) == 1, tc.submitted
+    assert any("PROTECTION RE-ATTACHED" in a for a in actions), actions
+
+
+def test_audit_restores_a_missing_target_not_just_the_stop():
+    # A lone stop is where every position ended up previously: the 1.5:1
+    # reward:risk does not exist without the target. The stale stop must be
+    # cleared first so the replacement OCO does not stack on top of it.
+    setup(earnings_in=30, orders=[Order("ANET", "stop-1", type_="stop")])
+    tc = FakeClient([Position("ANET", 51)])
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.cancelled == ["stop-1"], tc.cancelled
+    assert len(tc.submitted) == 1, tc.submitted
+    assert any("target missing" in a for a in actions), actions
+
+
+def test_restored_protection_is_one_oco_not_two_loose_orders():
+    # Two independent orders would leave an orphan after the first fills,
+    # and that orphan would open a position in the opposite direction.
+    setup(earnings_in=30)
+    tc = FakeClient([Position("ANET", 51)])
+    broker.exit_checks(tc, NOW)
+    (req,) = tc.submitted
+    assert str(getattr(req, "order_class", "")).lower().endswith("oco"), req
+    assert req.stop_loss is not None and req.take_profit is not None
+
+
+def test_audit_never_stacks_when_the_stale_order_cannot_be_cleared():
+    # If the old stop survives and we attach anyway, the position carries two
+    # stops: the second fill does not exit it, it opens a short.
+    setup(earnings_in=30, orders=[Order("ANET", "stop-1", type_="stop")])
+    tc = FakeClient([Position("ANET", 51)])
+    tc.cancel_fails = ("stop-1",)
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.submitted == [], "must not add protection on top of a stuck order"
+    assert any("could not clear resting order" in a for a in actions), actions
+
+
+def test_unfilled_gtc_entry_is_cancelled():
+    # Entries are GTC now; one that never filled must not survive the day.
+    parent = Order("NVDA", "entry-1", side="buy", type_="limit",
+                   legs=[Order("NVDA", "leg-1")])
+    setup(earnings_in=30, orders=protection("ANET") + [parent])
+    tc = FakeClient([Position("ANET", 51)])
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.cancelled == ["entry-1"], tc.cancelled
+    assert any("UNFILLED ENTRY CANCELLED NVDA" in a for a in actions), actions
+
+
+def test_filled_entry_legs_are_never_cancelled():
+    # Once filled, the symbol is held and those legs ARE the protection.
+    parent = Order("ANET", "entry-1", side="buy", type_="limit",
+                   legs=[Order("ANET", "leg-1")])
+    setup(earnings_in=30, orders=protection("ANET") + [parent])
+    tc = FakeClient([Position("ANET", 51)])
+    broker.exit_checks(tc, NOW)
+    assert tc.cancelled == [], "must not cancel protection on a held position"
+
+
+def test_unfilled_entry_is_reaped_even_with_no_positions():
+    parent = Order("NVDA", "entry-1", side="buy", type_="limit",
+                   legs=[Order("NVDA", "leg-1")])
+    setup(orders=[parent])
+    tc = FakeClient([])
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.cancelled == ["entry-1"]
+    assert any("UNFILLED ENTRY CANCELLED" in a for a in actions), actions
 
 
 if __name__ == "__main__":

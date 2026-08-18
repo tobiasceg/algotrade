@@ -43,6 +43,17 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
 - **Timing probes live since Jul 11:** crons now fire 7 days/week; on market-closed
   days each firing logs `timing_probe` (slot, actual time, lag minutes) to the journal
   instead of exiting silently — building the lag/drop dataset for the scheduler decision.
+- **Bracket legs were expiring nightly — fixed Aug 18.** Brackets were submitted
+  `TimeInForce.DAY`, and Alpaca applies one TIF to the whole order, so the stop and
+  target died with the session that created them. Every position so far (ANET Aug 5,
+  HPE + SMCI Aug 14) sat with no stop and no target from that day's close until the
+  next afternoon's audit — 70 hours across the Aug 14 weekend — and no position ever
+  had a working target, so the 1.5:1 reward:risk did not exist. Brackets are now GTC;
+  the pre-close run reaps any entry that never filled (preserving the anti-chase
+  behaviour of a DAY entry); the audit checks the target as well as the stop and
+  restores both as a single **OCO** pair, clearing stale legs first and refusing to
+  attach if a cancel fails — two loose orders would leave an orphan that opens a
+  position the opposite way.
 - **Earnings protection + per-name trend filter added Aug 5.** Longs now have a
   mechanical earnings block (2 trading days, matching the veto prompt so arms A and B
   block identically; unknown date does *not* block a long), and every candidate must

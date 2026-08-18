@@ -123,6 +123,15 @@ def submit_bracket(tc, order: dict) -> str:
     Works for both books: a long entry is a BUY with the stop below and
     target above; a short entry is a SELL with the stop above and target
     below. Alpaca's bracket class handles both natively.
+
+    GTC, not DAY. Alpaca applies one time-in-force to the whole bracket, and
+    under DAY the stop and target legs expire with the session that created
+    them — every position so far (ANET Aug 5, HPE and SMCI Aug 14) was left
+    naked from that day's close until the next afternoon's audit, 70 hours
+    across a weekend. GTC keeps the protection alive; the anti-chase
+    behaviour of a DAY entry is preserved instead by
+    cancel_stale_entry_orders() in the pre-close run, which kills any entry
+    that has not filled by then.
     """
     from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
     from alpaca.trading.requests import (
@@ -136,7 +145,7 @@ def submit_bracket(tc, order: dict) -> str:
         symbol=order["symbol"],
         qty=order["qty"],
         side=side,
-        time_in_force=TimeInForce.DAY,
+        time_in_force=TimeInForce.GTC,
         limit_price=order["limit_price"],
         order_class=OrderClass.BRACKET,
         stop_loss=StopLossRequest(stop_price=order["stop"]),
@@ -144,6 +153,35 @@ def submit_bracket(tc, order: dict) -> str:
     )
     result = tc.submit_order(req)
     return str(result.id)
+
+
+def cancel_stale_entry_orders(tc, orders, held_symbols) -> list[str]:
+    """Kill entry orders that never filled — the other half of going GTC.
+
+    A GTC entry would otherwise rest for days and could fill long after the
+    breakout that justified it had gone. Cancelling it in the pre-close run
+    reproduces a DAY order closely (it dies at 14:15 ET instead of 16:00),
+    and the fills given up are the last-100-minutes ones, which are the
+    weakest anyway.
+
+    An entry is identified as a bracket parent (it carries child legs) whose
+    symbol we do not hold — once filled, the symbol appears in positions and
+    the surviving legs are exits, not entries.
+    """
+    actions = []
+    for o in orders:
+        if _val(o.status) not in ACTIVE_STATUSES:
+            continue
+        if not getattr(o, "legs", None):
+            continue  # not a bracket parent
+        if o.symbol in held_symbols:
+            continue  # filled; these legs are the protection
+        try:
+            tc.cancel_order_by_id(str(o.id))
+            actions.append(f"UNFILLED ENTRY CANCELLED {o.symbol} (limit never hit)")
+        except Exception as exc:  # noqa: BLE001 — a stuck cancel must not stop the pass
+            print(f"[exit] cancel unfilled entry {o.symbol} {o.id}: {exc}")
+    return actions
 
 
 def shortable(tc, symbol: str) -> bool:
@@ -211,7 +249,7 @@ def _holding_status(p, symbol: str, is_short: bool, held, max_hold: int, ted) ->
         bits.append(f"entry {entry:.2f} -> {current:.2f}")
     if ted is not None:
         bits.append(f"earnings in {ted}")
-    bits.append("stop ok")
+    bits.append("stop+target ok")
     return ", ".join(bits)
 
 
@@ -219,10 +257,15 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
     """Mechanical pre-close pass. Returns human-readable action lines."""
     actions: list[str] = []
     positions = tc.get_all_positions()
-    if not positions:
-        return ["no open positions"]
-
     orders = _recent_orders(tc)
+    held_symbols = {p.symbol for p in positions}
+
+    # Entries are GTC now, so anything still unfilled has to be reaped here
+    # or it could fill days after its setup expired.
+    actions.extend(cancel_stale_entry_orders(tc, orders, held_symbols))
+
+    if not positions:
+        return actions or ["no open positions"]
 
     for p in positions:
         symbol = p.symbol
@@ -281,37 +324,101 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
                 )
                 continue
 
-        # --- stop audit ---------------------------------------------------
-        # A long is protected by a SELL stop below; a short by a BUY stop above.
+        # --- protection audit -----------------------------------------------
+        # A long is protected by a SELL stop below and a SELL limit above; a
+        # short by the mirror. Both legs matter: without the target the 1.5:1
+        # reward:risk the rules engine sized for simply does not exist.
         protect_side = "buy" if is_short else "sell"
-        has_stop = any(
-            _val(o.side) == protect_side and "stop" in _val(o.type or o.order_type)
-            for o in live
-        )
-        if not has_stop:
-            stop_price = (entry_rec or {}).get("stop")
-            if stop_price:
-                from alpaca.trading.enums import OrderSide, TimeInForce
-                from alpaca.trading.requests import StopOrderRequest
+        exits = [o for o in live if _val(o.side) == protect_side]
+        has_stop = any("stop" in _val(o.type or o.order_type) for o in exits)
+        has_target = any("limit" in _val(o.type or o.order_type) for o in exits)
 
-                tc.submit_order(
-                    StopOrderRequest(
-                        symbol=symbol,
-                        qty=abs(int(float(p.qty))),
-                        side=OrderSide.BUY if is_short else OrderSide.SELL,
-                        time_in_force=TimeInForce.GTC,
-                        stop_price=stop_price,
-                    )
-                )
-                actions.append(f"STOP RE-ATTACHED {symbol} @ {stop_price} (was unprotected!)")
-            else:
-                actions.append(
-                    f"ALERT {symbol}: NO STOP and none in journal — needs manual attention"
-                )
-        else:
+        if has_stop and has_target:
             # Nothing needed doing — say so anyway. A silent exit run reads
             # identically whether a position is healthy or was never looked
             # at, which is no use to anyone reading it at 2:15 AM.
             actions.append(_holding_status(p, symbol, is_short, held, max_hold, ted))
+            continue
+
+        pos_qty = abs(int(float(p.qty)))
+        stop_price = (entry_rec or {}).get("stop")
+        target_price = (entry_rec or {}).get("target")
+        missing = ([] if has_stop else ["stop"]) + ([] if has_target else ["target"])
+
+        if not stop_price:
+            actions.append(
+                f"ALERT {symbol}: NO STOP and none in journal — needs manual attention"
+            )
+            continue
+
+        # Clear whatever partial protection is resting before replacing it.
+        # Adding an OCO pair on top of a surviving lone stop would leave two
+        # stops against one position: they do not merely exit it, the second
+        # fill opens a position the other way. Cancel first, attach second,
+        # and if a cancel fails, attach nothing.
+        stuck = []
+        for o in exits:
+            try:
+                tc.cancel_order_by_id(str(o.id))
+            except Exception as exc:  # noqa: BLE001
+                stuck.append(str(o.id))
+                print(f"[exit] cancel resting exit {symbol} {o.id}: {exc}")
+
+        if stuck:
+            actions.append(
+                f"WARNING {symbol}: could not clear resting order(s) {', '.join(stuck)} "
+                "— not adding more protection on top"
+            )
+            continue
+
+        try:
+            _attach_protection(tc, symbol, pos_qty, is_short, stop_price, target_price)
+            actions.append(
+                f"PROTECTION RE-ATTACHED {symbol}: {'+'.join(missing)} missing, "
+                f"OCO stop {stop_price} / target {target_price} on {pos_qty} shares"
+            )
+        except Exception as exc:  # noqa: BLE001 — must not abort the whole pass
+            actions.append(
+                f"ALERT {symbol}: could not re-attach protection ({exc}) — "
+                "needs manual attention"
+            )
+        continue
 
     return actions
+
+
+def _attach_protection(tc, symbol, qty, is_short, stop_price, target_price) -> None:
+    """Put a stop and target back on as one OCO pair (or a lone stop if the
+    journal has no target). OCO is what makes them cancel each other."""
+    from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+    from alpaca.trading.requests import (
+        LimitOrderRequest,
+        StopLossRequest,
+        StopOrderRequest,
+        TakeProfitRequest,
+    )
+
+    side = OrderSide.BUY if is_short else OrderSide.SELL
+    if not target_price:
+        tc.submit_order(
+            StopOrderRequest(
+                symbol=symbol, qty=qty, side=side,
+                time_in_force=TimeInForce.GTC, stop_price=stop_price,
+            )
+        )
+        return
+
+    tc.submit_order(
+        LimitOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=side,
+            time_in_force=TimeInForce.GTC,
+            limit_price=target_price,
+            order_class=OrderClass.OCO,
+            stop_loss=StopLossRequest(stop_price=stop_price),
+            take_profit=TakeProfitRequest(limit_price=target_price),
+        )
+    )
+
+
