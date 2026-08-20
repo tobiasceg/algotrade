@@ -17,6 +17,10 @@ import journal
 ET = ZoneInfo("America/New_York")
 NOW = datetime(2026, 8, 5, 14, 15, tzinfo=ET)
 
+# The retry/settle loops sleep between attempts; nothing here needs real
+# waiting, and the fake client settles cancels instantly.
+broker.time_mod.sleep = lambda seconds: None
+
 
 class Position:
     def __init__(self, symbol, qty, avg_entry_price=194.10, current_price=195.51,
@@ -50,7 +54,7 @@ class FakeClient:
     def __init__(self, positions, orders=()):
         self._positions = list(positions)
         self._orders = list(orders)
-        self.cancelled, self.closed, self.submitted = [], [], []
+        self.cancelled, self.closed, self.submitted, self.rejected = [], [], [], []
 
     def get_all_positions(self):
         return self._positions
@@ -65,9 +69,20 @@ class FakeClient:
     def close_position(self, symbol):
         self.closed.append(symbol)
 
+    # Number of leading submit_order calls to reject, and with what.
+    reject_submits = 0
+    reject_error = "insufficient qty available for order (requested: 163, available: 0)"
+
     def submit_order(self, req):
+        if self.reject_submits > 0:
+            self.reject_submits -= 1
+            self.rejected.append(req)
+            raise RuntimeError(self.reject_error)
         self.submitted.append(req)
         return req
+
+    def get_order_by_id(self, order_id):
+        return Order("X", order_id, status="canceled")
 
 
 def setup(entry_days_ago=1, earnings_in=None, orders=()):
@@ -238,6 +253,38 @@ def test_audit_never_stacks_when_the_stale_order_cannot_be_cleared():
     actions = broker.exit_checks(tc, NOW)
     assert tc.submitted == [], "must not add protection on top of a stuck order"
     assert any("could not clear resting order" in a for a in actions), actions
+
+
+def test_oco_rejection_falls_back_to_a_bare_stop():
+    # The live Aug 18 HPE failure: the stop was cancelled, the OCO bounced on
+    # "insufficient qty" while the cancel settled, and the position was left
+    # naked overnight. A rejected pair must never mean no protection.
+    setup(earnings_in=30, orders=[Order("HPE", "stop-1", type_="stop", qty=163)])
+    tc = FakeClient([Position("HPE", 163)])
+    tc.reject_submits = 3                        # every OCO attempt fails
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.cancelled == ["stop-1"]
+    assert len(tc.submitted) == 1, tc.submitted  # the bare stop got on
+    assert any("fell back to a bare stop" in a for a in actions), actions
+    assert not any("UNPROTECTED" in a for a in actions), actions
+
+
+def test_oco_succeeds_on_a_retry_after_the_cancel_settles():
+    setup(earnings_in=30, orders=[Order("HPE", "stop-1", type_="stop", qty=163)])
+    tc = FakeClient([Position("HPE", 163)])
+    tc.reject_submits = 1                        # first attempt only
+    actions = broker.exit_checks(tc, NOW)
+    assert len(tc.submitted) == 1
+    assert any("PROTECTION RE-ATTACHED" in a for a in actions), actions
+
+
+def test_total_failure_is_flagged_as_unprotected():
+    setup(earnings_in=30, orders=[Order("HPE", "stop-1", type_="stop", qty=163)])
+    tc = FakeClient([Position("HPE", 163)])
+    tc.reject_submits = 99                       # nothing will go on
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.submitted == []
+    assert any("UNPROTECTED" in a for a in actions), actions
 
 
 def test_unfilled_gtc_entry_is_cancelled():

@@ -14,6 +14,7 @@ callers fall back to SIM_ACCOUNT for a dry run.
 """
 
 import os
+import time as time_mod
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -354,8 +355,7 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
         # Clear whatever partial protection is resting before replacing it.
         # Adding an OCO pair on top of a surviving lone stop would leave two
         # stops against one position: they do not merely exit it, the second
-        # fill opens a position the other way. Cancel first, attach second,
-        # and if a cancel fails, attach nothing.
+        # fill opens a position the other way.
         stuck = []
         for o in exits:
             try:
@@ -371,20 +371,84 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
             )
             continue
 
-        try:
-            _attach_protection(tc, symbol, pos_qty, is_short, stop_price, target_price)
+        # Alpaca keeps the shares reserved until a cancel actually settles, so
+        # submitting straight away is rejected for insufficient quantity
+        # (2026-08-18: HPE's stop was cancelled, the replacement bounced, and
+        # the position sat naked overnight — worse than before the audit ran).
+        # Wait for the release, and if the pair still will not go on, put the
+        # plain stop back. Never leave a position less protected than found.
+        _await_release(tc, [str(o.id) for o in exits])
+        outcome = _restore_protection(
+            tc, symbol, pos_qty, is_short, stop_price, target_price
+        )
+        if outcome == "oco":
             actions.append(
                 f"PROTECTION RE-ATTACHED {symbol}: {'+'.join(missing)} missing, "
                 f"OCO stop {stop_price} / target {target_price} on {pos_qty} shares"
             )
-        except Exception as exc:  # noqa: BLE001 — must not abort the whole pass
+        elif outcome == "stop":
             actions.append(
-                f"ALERT {symbol}: could not re-attach protection ({exc}) — "
-                "needs manual attention"
+                f"STOP RE-ATTACHED {symbol} @ {stop_price} — OCO pair was rejected, "
+                "fell back to a bare stop (no target); will retry tomorrow"
+            )
+        else:
+            actions.append(
+                f"ALERT {symbol}: UNPROTECTED — could not attach a stop "
+                f"({outcome}) — needs manual attention"
             )
         continue
 
     return actions
+
+
+def _await_release(tc, order_ids, timeout_s: float = 20.0) -> None:
+    """Block until cancelled orders stop reserving their shares."""
+    if not order_ids:
+        return
+    deadline = time_mod.monotonic() + timeout_s
+    pending = list(order_ids)
+    while pending and time_mod.monotonic() < deadline:
+        still = []
+        for oid in pending:
+            try:
+                o = tc.get_order_by_id(oid)
+            except Exception:  # noqa: BLE001 — gone is as good as settled
+                continue
+            if _val(getattr(o, "status", "")) in ACTIVE_STATUSES:
+                still.append(oid)
+        pending = still
+        if pending:
+            time_mod.sleep(1.0)
+    if pending:
+        print(f"[exit] cancels still pending after {timeout_s:.0f}s: {pending}")
+
+
+def _restore_protection(tc, symbol, qty, is_short, stop_price, target_price) -> str:
+    """Try the OCO pair, then a bare stop. Returns 'oco', 'stop', or the error.
+
+    The fallback is the point: a target is a nicety, an unprotected position
+    is not. Retries absorb the broker still settling the cancel.
+    """
+    last = ""
+    for attempt in range(3):
+        try:
+            _attach_protection(tc, symbol, qty, is_short, stop_price, target_price)
+            return "oco"
+        except Exception as exc:  # noqa: BLE001
+            last = str(exc)
+            print(f"[exit] {symbol} OCO attempt {attempt + 1} failed: {exc}")
+            time_mod.sleep(2.0)
+
+    for attempt in range(2):
+        try:
+            _attach_protection(tc, symbol, qty, is_short, stop_price, None)
+            return "stop"
+        except Exception as exc:  # noqa: BLE001
+            last = str(exc)
+            print(f"[exit] {symbol} bare-stop attempt {attempt + 1} failed: {exc}")
+            time_mod.sleep(2.0)
+
+    return last
 
 
 def _attach_protection(tc, symbol, qty, is_short, stop_price, target_price) -> None:
