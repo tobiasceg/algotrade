@@ -165,3 +165,4 @@
 {"ts": "2026-08-20T18:15:01+00:00", "event": "exit_run", "date": "2026-08-20", "dry_run": false, "actions": ["TIME EXIT SMCI: held 5 trading days (max 5), closed at market"]}
 {"ts": "2026-08-21T14:00:18+00:00", "event": "entry_run", "date": "2026-08-21", "dry_run": false, "book": "none", "books": [{"book": "long", "status": "idle \u2014 QQQ below 50d MA (risk-off)"}, {"book": "short", "status": "idle \u2014 QQQ less than 1% below 50d MA (inside hysteresis buffer)"}], "market": {"benchmark": "QQQ", "close": 710.93, "ma50": 712.94, "above_trend": false}, "macro_events": [], "candidates": [], "veto": [], "placed": [], "rejected": []}
 {"ts": "2026-08-21T18:15:01+00:00", "event": "exit_run", "date": "2026-08-21", "dry_run": false, "actions": ["no open positions"]}
+{"ts": "2026-08-22T09:53:53+00:00", "event": "timing_probe", "date": "2026-08-22", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "09:53", "lag_minutes": 16.9}
