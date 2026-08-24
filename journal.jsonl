@@ -182,3 +182,4 @@
 {"ts": "2026-08-23T17:27:41+00:00", "event": "timing_probe", "date": "2026-08-23", "mode": "exit", "cron": "7 17 * * *", "scheduled_utc": "17:07", "actual_utc": "17:27", "lag_minutes": 20.7}
 {"ts": "2026-08-23T19:31:28+00:00", "event": "timing_probe", "date": "2026-08-23", "mode": "exit", "cron": "7 19 * * *", "scheduled_utc": "19:07", "actual_utc": "19:31", "lag_minutes": 24.5}
 {"ts": "2026-08-24T14:00:17+00:00", "event": "entry_run", "date": "2026-08-24", "dry_run": false, "book": "none", "books": [{"book": "long", "status": "active \u2014 no breakouts"}, {"book": "short", "status": "idle \u2014 QQQ above 50d MA (risk-on)"}], "market": {"benchmark": "QQQ", "close": 713.44, "ma50": 713.35, "above_trend": true}, "macro_events": [], "candidates": [], "veto": [], "placed": [], "rejected": []}
+{"ts": "2026-08-24T18:15:01+00:00", "event": "exit_run", "date": "2026-08-24", "dry_run": false, "actions": ["no open positions"]}
