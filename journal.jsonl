@@ -189,3 +189,4 @@
 {"ts": "2026-08-26T18:15:00+00:00", "event": "exit_run", "date": "2026-08-26", "dry_run": false, "actions": ["no open positions"]}
 {"ts": "2026-08-29T14:39:58+00:00", "event": "timing_probe", "date": "2026-08-29", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "14:39", "lag_minutes": 303.0}
 {"ts": "2026-08-29T15:17:19+00:00", "event": "timing_probe", "date": "2026-08-29", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "15:17", "lag_minutes": 280.3}
+{"ts": "2026-08-29T17:04:23+00:00", "event": "timing_probe", "date": "2026-08-29", "mode": "entry", "cron": "7 13 * * *", "scheduled_utc": "13:07", "actual_utc": "17:04", "lag_minutes": 237.4}
