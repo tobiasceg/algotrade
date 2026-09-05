@@ -216,3 +216,4 @@
 {"ts": "2026-09-04T18:15:03+00:00", "event": "exit_run", "date": "2026-09-04", "dry_run": false, "actions": ["DELL: holding, day 1 of 5, +0.2%, entry 526.69 -> 527.90, earnings in 58, stop+target ok"]}
 {"ts": "2026-09-05T13:00:18+00:00", "event": "timing_probe", "date": "2026-09-05", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "13:00", "lag_minutes": 203.3}
 {"ts": "2026-09-05T13:31:37+00:00", "event": "timing_probe", "date": "2026-09-05", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "13:31", "lag_minutes": 174.6}
+{"ts": "2026-09-05T15:57:33+00:00", "event": "timing_probe", "date": "2026-09-05", "mode": "entry", "cron": "7 13 * * *", "scheduled_utc": "13:07", "actual_utc": "15:57", "lag_minutes": 170.6}
