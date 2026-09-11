@@ -145,11 +145,13 @@ GitHub secrets wired, repo pushed and crons activated.
 
 1. **Monday Jul 13, ~10 PM SGT:** first full test of the aim-early schedule for the
    entry run. Judge punctuality over Mon–Wed.
-2. **Analyze weekend probe data** (ask Claude: "tally the timing probes") — median/p95
-   lag and dropped-slot count per cron. This decides the **KIV'd scheduler question**:
-   if drops are frequent → move the trigger off GitHub (cron-job.org hitting
-   `workflow_dispatch` with a fine-grained PAT, ~10 min setup) or a ~$5/mo VPS.
-   Bot code is trigger-agnostic; nothing else changes.
+2. **Scheduler decision made Sep 11: move the trigger to cron-job.org.** GitHub's
+   cron degraded through August (probe median 2.5–4.7h, max 5.6h from Aug 29) and on
+   **Aug 27–28 every slot fired 10+ hours late, after the close — two trading days
+   with no runs at all** (guard correctly refused; runs show "success"). Workflow now
+   accepts a `cron` input on `workflow_dispatch`, serializes dispatched runs in the
+   same concurrency group, and keeps 4 GitHub crons as fallback. Setup steps in
+   `CRONJOB_SETUP.md`; Tobias creates the fine-grained PAT and the 4 jobs.
 3. **Add `ANTHROPIC_API_KEY` secret** (console.anthropic.com) → flips arm A to arm B.
    First live veto call happens the first day a candidate fires with the key present.
 4. **Build arm C** — one open-ended Claude call replacing rules+veto, same guardrails.
