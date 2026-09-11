@@ -90,7 +90,8 @@ def setup(entry_days_ago=1, earnings_in=None, orders=()):
     broker._recent_orders = lambda tc, days=30: list(orders)
     broker.trading_days_to_earnings = lambda symbol, today: earnings_in
     # An entry recent enough that the time stop is not what fires.
-    signal = "2026-08-04" if entry_days_ago <= 1 else "2026-07-20"
+    # 2026-07-06 -> 2026-08-05 is 22 sessions, past any plausible max hold.
+    signal = "2026-08-04" if entry_days_ago <= 1 else "2026-07-06"
     journal.last_order_for = lambda symbol: {
         "signal_date": signal, "stop": 100.0, "target": 220.0,
     }
@@ -180,7 +181,7 @@ def test_healthy_position_reports_a_status_line():
     assert tc.closed == [] and actions != []
     line = actions[0]
     assert "ANET: holding" in line, line
-    assert "day 1 of 5" in line, line
+    assert "day 1 of 15" in line, line
     assert "+0.7%" in line, line
     assert "194.10 -> 195.51" in line, line
     assert "earnings in 63" in line, line

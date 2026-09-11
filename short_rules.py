@@ -91,7 +91,7 @@ def blocking_gate(t: dict) -> str | None:
     if days_to_earnings <= config.SHORT_EARNINGS_BLOCK_DAYS:
         return GATE_EARNINGS
 
-    if round(t["close"] - config.TARGET_ATR_MULT * t["atr14"], 2) <= 0:
+    if round(t["close"] - config.SHORT_TARGET_ATR_MULT * t["atr14"], 2) <= 0:
         return GATE_DATA
 
     return None
@@ -150,7 +150,7 @@ def generate_candidates(snapshot: dict) -> list[dict]:
             pct_below = round((1 - t["close"] / t["low_20d"]) * 100, 2)
         crash_pct = round((1 - t["close"] / t["high_20d"]) * 100, 2)
         stop = round(t["close"] + config.STOP_ATR_MULT * t["atr14"], 2)
-        target = round(t["close"] - config.TARGET_ATR_MULT * t["atr14"], 2)
+        target = round(t["close"] - config.SHORT_TARGET_ATR_MULT * t["atr14"], 2)
 
         candidates.append(
             {
@@ -167,7 +167,7 @@ def generate_candidates(snapshot: dict) -> list[dict]:
                 "crash_from_high_pct": crash_pct,
                 "risk_per_share": round(stop - t["close"], 2),
                 "reward_risk": round(
-                    config.TARGET_ATR_MULT / config.STOP_ATR_MULT, 2
+                    config.SHORT_TARGET_ATR_MULT / config.STOP_ATR_MULT, 2
                 ),
                 "reason": (
                     f"closed below 20-day low ({t['low_20d']}) at {t['close']} "

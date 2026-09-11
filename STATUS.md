@@ -43,6 +43,20 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
 - **Timing probes live since Jul 11:** crons now fire 7 days/week; on market-closed
   days each firing logs `timing_probe` (slot, actual time, lag minutes) to the journal
   instead of exiting silently — building the lag/drop dataset for the scheduler decision.
+- **Exit rules changed Sep 11: hold 15 sessions, 6-ATR target (was 5 / 3 ATR).** A
+  2-year replay of the exact long-book rules over the watchlist: 144 trades, 47% win,
+  **−0.54%/trade**, equity 100→92, even on a hindsight-picked list. Cause: 56% of trades
+  ended on the 5-day clock (+1.75% avg), 35% on the full 2-ATR stop (−7.7%), only 8%
+  reached the 3-ATR target. The entry checkboxes were tested one by one (volume, extension,
+  own-trend, regime strength, gap, 55-day highs, fill mechanics): none predicts outcome,
+  and no tightening improves expectancy — volume ≥1.5× has zero predictive value and
+  mainly throttles the trade count. Same entries with hold 15 / target 6 ATR: **+2.40%/
+  trade, 47% win, positive in every full half-year, dd −12.5%** (interior point of a
+  smooth hold×target surface). In-sample; expect less. Short book keeps its 3-ATR target
+  (`SHORT_TARGET_ATR_MULT`). Open positions inherit the 15-day hold; their bracket
+  targets stay at the 3-ATR level already resting at the broker. Untested options left
+  on the table: volume floor 1.0× (≈3× the trades, higher avg, bigger dd), extension cap
+  2.5% (fewer trades, lower dd), trailing stop (needs new broker code).
 - **Bracket legs were expiring nightly — fixed Aug 18.** Brackets were submitted
   `TimeInForce.DAY`, and Alpaca applies one TIF to the whole order, so the stop and
   target died with the session that created them. Every position so far (ANET Aug 5,

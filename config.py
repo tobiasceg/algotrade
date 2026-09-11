@@ -38,7 +38,15 @@ MAX_BREAKOUT_EXT_PCT = 5.0   # skip if close is more than this % above the
                              # 20-day high — a huge gap has already spent the
                              # move, and chasing it wrecks the reward:risk
 STOP_ATR_MULT = 2.0          # stop  = close - 2.0 * ATR
-TARGET_ATR_MULT = 3.0        # target = close + 3.0 * ATR  (1.5 reward:risk)
+TARGET_ATR_MULT = 6.0        # target = close + 6.0 * ATR  (3:1 reward:risk)
+# Was 3.0 with a 5-day hold. A 2-year replay of these exact entries (Sep 11
+# 2026) showed the 3-ATR target was reached on only 8% of trades inside 5
+# sessions, so the typical winner was cut by the clock at +1.75% while the
+# typical loser took the full 2-ATR stop at -7.7%: avg -0.54%/trade. With a
+# 15-session hold and a 6-ATR target the same entries averaged +2.40%/trade,
+# positive in every full half-year, with the lowest drawdown of the grid.
+# Interior point of a smooth surface (hold 10-20 x target 4-8 all positive),
+# not a tuned corner. In-sample; expect less live.
 
 # Per-name trend filter: a candidate must be on the right side of its OWN
 # 50-day MA, not just the index's. The watchlist spans semiconductors and
@@ -64,8 +72,10 @@ MAX_ENTRY_SLIP_PCT = 2.0     # entry is a DAY limit this % above signal close;
                              # never fills — free protection against chasing
 
 # Exit management (step 6, pre-close run — fully mechanical)
-MAX_HOLD_DAYS = 5            # time stop, in trading days; momentum trades
-                             # that go nowhere get closed, not babysat
+MAX_HOLD_DAYS = 15           # time stop, in trading days. Was 5: too short
+                             # for a 20-day breakout to travel to its target
+                             # (see TARGET_ATR_MULT). Applies to open
+                             # positions immediately.
 
 # Close any open position ahead of its earnings report. The entry blocks stop
 # us OPENING near earnings, but a 5-day hold can still swallow a report that
@@ -93,6 +103,9 @@ SHORT_EARNINGS_BLOCK_DAYS = 5   # mechanical earnings block, in TRADING days
 MAX_SHORT_POSITION_PCT = 0.05   # half the long size, same reasoning
 SHORT_MAX_HOLD_DAYS = 3         # bear rallies are violent; a short that is
                                 # not working quickly is wrong
+SHORT_TARGET_ATR_MULT = 3.0     # shorts keep the original 3-ATR target: the
+                                # Sep 11 replay covered the long book only,
+                                # and a 3-day hold cannot reach 6 ATR anyway
 
 # Claude veto layer (step 4)
 VETO_MODEL = "claude-opus-4-8"

@@ -4,6 +4,7 @@ Live snapshots rarely contain breakouts, so these hand-built cases are how
 each rule gets exercised. Run:  python test_rules.py
 """
 
+import config
 import rules
 
 
@@ -41,8 +42,9 @@ def test_clean_breakout_becomes_candidate():
     assert len(out) == 1, out
     c = out[0]
     assert c["symbol"] == "VRT" and c["action"] == "BUY"
-    assert c["stop"] == round(142.10 - 2.0 * 3.15, 2)    # 135.80
-    assert c["target"] == round(142.10 + 3.0 * 3.15, 2)  # 151.55
+    assert c["stop"] == round(142.10 - config.STOP_ATR_MULT * 3.15, 2)
+    assert c["target"] == round(142.10 + config.TARGET_ATR_MULT * 3.15, 2)
+    assert c["reward_risk"] == round(config.TARGET_ATR_MULT / config.STOP_ATR_MULT, 2)
     assert c["stop"] < c["close"] < c["target"]
 
 
