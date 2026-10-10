@@ -329,3 +329,4 @@
 {"ts": "2026-10-09T18:15:02+00:00", "event": "exit_run", "date": "2026-10-09", "dry_run": false, "actions": ["LITE: holding, day 6 of 15, +5.0%, entry 1056.99 -> 1109.81, earnings in 19, stop+target ok", "MRVL: holding, day 3 of 15, -3.5%, entry 283.25 -> 273.45, earnings in 36, stop+target ok", "VST: holding, day 3 of 15, +0.1%, entry 160.54 -> 160.71, earnings in 20, stop+target ok"]}
 {"ts": "2026-10-10T15:33:01+00:00", "event": "timing_probe", "date": "2026-10-10", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "15:33", "lag_minutes": 356.0}
 {"ts": "2026-10-10T15:56:51+00:00", "event": "timing_probe", "date": "2026-10-10", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "15:56", "lag_minutes": 319.9}
+{"ts": "2026-10-10T17:57:07+00:00", "event": "timing_probe", "date": "2026-10-10", "mode": "exit", "cron": "37 13 * * *", "scheduled_utc": "13:37", "actual_utc": "17:57", "lag_minutes": 260.1}
