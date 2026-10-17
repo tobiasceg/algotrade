@@ -348,3 +348,4 @@
 {"ts": "2026-10-17T13:08:01+00:00", "event": "timing_probe", "date": "2026-10-17", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "13:08", "lag_minutes": 211.0}
 {"ts": "2026-10-17T13:53:45+00:00", "event": "timing_probe", "date": "2026-10-17", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "13:53", "lag_minutes": 196.8}
 {"ts": "2026-10-17T16:36:45+00:00", "event": "timing_probe", "date": "2026-10-17", "mode": "exit", "cron": "37 13 * * *", "scheduled_utc": "13:37", "actual_utc": "16:36", "lag_minutes": 179.8}
+{"ts": "2026-10-17T18:26:14+00:00", "event": "timing_probe", "date": "2026-10-17", "mode": "exit", "cron": "7 16 * * *", "scheduled_utc": "16:07", "actual_utc": "18:26", "lag_minutes": 139.2}
