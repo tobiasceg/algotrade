@@ -386,3 +386,4 @@
 {"ts": "2026-10-30T18:15:02+00:00", "event": "exit_run", "date": "2026-10-30", "dry_run": false, "actions": ["no open positions"]}
 {"ts": "2026-10-31T15:28:56+00:00", "event": "timing_probe", "date": "2026-10-31", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "15:28", "lag_minutes": 351.9}
 {"ts": "2026-10-31T15:51:25+00:00", "event": "timing_probe", "date": "2026-10-31", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "15:51", "lag_minutes": 314.4}
+{"ts": "2026-10-31T17:52:57+00:00", "event": "timing_probe", "date": "2026-10-31", "mode": "exit", "cron": "37 13 * * *", "scheduled_utc": "13:37", "actual_utc": "17:52", "lag_minutes": 256.0}
