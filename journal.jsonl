@@ -384,3 +384,4 @@
 {"ts": "2026-10-29T18:15:02+00:00", "event": "exit_run", "date": "2026-10-29", "dry_run": false, "actions": ["no open positions"]}
 {"ts": "2026-10-30T14:01:21+00:00", "event": "entry_run", "date": "2026-10-30", "dry_run": false, "book": "none", "books": [{"book": "long", "status": "idle \u2014 QQQ below 50d MA (risk-off)"}, {"book": "short", "status": "active \u2014 1 below 20d low, none qualified (1 already crashed)"}], "market": {"benchmark": "QQQ", "close": 715.34, "ma50": 725.1, "above_trend": false}, "macro_events": [], "candidates": [], "veto": [], "placed": [], "rejected": []}
 {"ts": "2026-10-30T18:15:02+00:00", "event": "exit_run", "date": "2026-10-30", "dry_run": false, "actions": ["no open positions"]}
+{"ts": "2026-10-31T15:28:56+00:00", "event": "timing_probe", "date": "2026-10-31", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "15:28", "lag_minutes": 351.9}
