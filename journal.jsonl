@@ -409,3 +409,4 @@
 {"ts": "2026-11-06T19:15:02+00:00", "event": "exit_run", "date": "2026-11-06", "dry_run": false, "actions": ["GEV (short): holding, day 1 of 3, +3.5%, entry 801.12 -> 773.48, earnings in 54, stop+target ok"]}
 {"ts": "2026-11-07T15:52:45+00:00", "event": "timing_probe", "date": "2026-11-07", "mode": "entry", "cron": "37 9 * * *", "scheduled_utc": "09:37", "actual_utc": "15:52", "lag_minutes": 375.8}
 {"ts": "2026-11-07T16:36:22+00:00", "event": "timing_probe", "date": "2026-11-07", "mode": "entry", "cron": "37 10 * * *", "scheduled_utc": "10:37", "actual_utc": "16:36", "lag_minutes": 359.4}
+{"ts": "2026-11-07T18:13:29+00:00", "event": "timing_probe", "date": "2026-11-07", "mode": "exit", "cron": "37 13 * * *", "scheduled_utc": "13:37", "actual_utc": "18:13", "lag_minutes": 276.5}
