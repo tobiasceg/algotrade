@@ -424,17 +424,34 @@ def run_exit(now_et: datetime) -> None:
         journal.log("exit_run", date=now_et.date().isoformat(), dry_run=True, actions=[])
         return
 
-    actions = broker.exit_checks(tc, now_et)
+    # A failure here (e.g. the broker API down) means nothing was checked.
+    # Say so loudly, and deliberately write NO exit_run record: the dedupe
+    # then stays open so a later backup firing retries the pass. Open
+    # positions keep their bracket legs at the exchange in the meantime.
+    try:
+        actions = broker.exit_checks(tc, now_et)
+    except Exception as exc:  # noqa: BLE001
+        journal.log("exit_error", date=now_et.date().isoformat(), error=str(exc))
+        notify.send(
+            f"[BOT] exit run {now_et:%Y-%m-%d} FAILED\n{exc}\n"
+            "nothing recorded — a later backup run will retry; "
+            "open positions keep their stops and targets at the exchange"
+        )
+        raise
     for a in actions:
         print(f"[exit] {a}")
-    account = broker.account_state(tc)
+
+    # The work is done by now, so record it even if the account read fails.
+    try:
+        account = broker.account_state(tc)
+        portfolio = (
+            f"\nportfolio: equity {account['equity']:,.0f} | cash {account['cash']:,.0f} "
+            f"| {len(account['positions'])} position(s)"
+        )
+    except Exception as exc:  # noqa: BLE001
+        portfolio = f"\nportfolio: unavailable ({exc})"
     journal.log("exit_run", date=now_et.date().isoformat(), dry_run=False, actions=actions)
-    notify.send(
-        f"[BOT] exit run {now_et:%Y-%m-%d}\n"
-        + "\n".join(actions)
-        + f"\nportfolio: equity {account['equity']:,.0f} | cash {account['cash']:,.0f} "
-        f"| {len(account['positions'])} position(s)"
-    )
+    notify.send(f"[BOT] exit run {now_et:%Y-%m-%d}\n" + "\n".join(actions) + portfolio)
 
 
 def main() -> int:

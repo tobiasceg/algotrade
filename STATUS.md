@@ -43,6 +43,16 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
 - **Timing probes live since Jul 11:** crons now fire 7 days/week; on market-closed
   days each firing logs `timing_probe` (slot, actual time, lag minutes) to the journal
   instead of exiting silently — building the lag/drop dataset for the scheduler decision.
+- **Exit-pass crash fixed Nov 13.** On Nov 4 the time-exit code cancelled TSM's stop
+  and target and immediately tried to buy the shares back; Alpaca still had them
+  reserved for the orders being cancelled, rejected it, and the uncaught error crashed
+  the run. TSM sat with no protection for 75 minutes until a GitHub fallback closed it,
+  and NVDA — closed earlier in the same run — was never journaled (backfilled Nov 13).
+  Now: closes wait for the cancels to settle and retry; a close that still fails puts
+  the stop/target back and alerts instead of crashing; each position is handled in its
+  own try/except; every close is journaled as `position_closed` the moment it happens;
+  a run that fails before checking anything logs `exit_error`, alerts on Telegram, and
+  writes no `exit_run` so the fallback retries.
 - **Exit rules changed Sep 11: hold 15 sessions, 6-ATR target (was 5 / 3 ATR).** A
   2-year replay of the exact long-book rules over the watchlist: 144 trades, 47% win,
   **−0.54%/trade**, equity 100→92, even on a hindsight-picked list. Cause: 56% of trades

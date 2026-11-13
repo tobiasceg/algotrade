@@ -269,136 +269,239 @@ def exit_checks(tc, now_et: datetime) -> list[str]:
         return actions or ["no open positions"]
 
     for p in positions:
-        symbol = p.symbol
-        is_short = float(p.qty) < 0
-        live = [
-            o for o in orders
-            if o.symbol == symbol and _val(o.status) in ACTIVE_STATUSES
-        ]
-        entry_rec = journal.last_order_for(symbol)
-
-        def close_out(reason: str) -> None:
-            """Cancel any resting bracket legs, then flatten at market."""
-            for o in live:
-                try:
-                    tc.cancel_order_by_id(str(o.id))
-                except Exception as exc:  # noqa: BLE001
-                    print(f"[exit] cancel {symbol} {o.id}: {exc}")
-            tc.close_position(symbol)
-            actions.append(reason)
-
-        # --- time stop ---------------------------------------------------
-        # Shorts get a shorter leash: bear-market rallies are violent.
-        max_hold = config.SHORT_MAX_HOLD_DAYS if is_short else config.MAX_HOLD_DAYS
-        held = None
-        if entry_rec and entry_rec.get("signal_date"):
-            held = _trading_days_held(
-                date.fromisoformat(entry_rec["signal_date"]), now_et.date()
-            )
-            if held >= max_hold:
-                close_out(
-                    f"TIME EXIT {symbol}{' (short)' if is_short else ''}: "
-                    f"held {held} trading days (max {max_hold}), closed at market"
-                )
-                continue
-        else:
-            actions.append(f"WARNING {symbol}: no journal entry — age unknown, time stop skipped")
-
-        # --- earnings exit -------------------------------------------------
-        # The entry gates stop us opening near a report, but a hold can still
-        # run into one. Being flat is the only defence against a gap, which
-        # opens through a stop rather than at it.
-        ted = None
-        if config.EXIT_BEFORE_EARNINGS:
-            ted = trading_days_to_earnings(symbol, now_et.date())
-            if ted is None:
-                # Deliberately do NOT flatten on an unknown date: closing a
-                # working position every time a scrape hiccups is worse than
-                # the residual risk the entry gate already screens for.
-                actions.append(
-                    f"WARNING {symbol}: earnings date unknown — cannot verify, holding"
-                )
-            elif ted <= config.EXIT_BEFORE_EARNINGS_DAYS:
-                close_out(
-                    f"EARNINGS EXIT {symbol}{' (short)' if is_short else ''}: "
-                    f"reports in {ted} session(s), closed at market"
-                )
-                continue
-
-        # --- protection audit -----------------------------------------------
-        # A long is protected by a SELL stop below and a SELL limit above; a
-        # short by the mirror. Both legs matter: without the target the 1.5:1
-        # reward:risk the rules engine sized for simply does not exist.
-        protect_side = "buy" if is_short else "sell"
-        exits = [o for o in live if _val(o.side) == protect_side]
-        has_stop = any("stop" in _val(o.type or o.order_type) for o in exits)
-        has_target = any("limit" in _val(o.type or o.order_type) for o in exits)
-
-        if has_stop and has_target:
-            # Nothing needed doing — say so anyway. A silent exit run reads
-            # identically whether a position is healthy or was never looked
-            # at, which is no use to anyone reading it at 2:15 AM.
-            actions.append(_holding_status(p, symbol, is_short, held, max_hold, ted))
-            continue
-
-        pos_qty = abs(int(float(p.qty)))
-        stop_price = (entry_rec or {}).get("stop")
-        target_price = (entry_rec or {}).get("target")
-        missing = ([] if has_stop else ["stop"]) + ([] if has_target else ["target"])
-
-        if not stop_price:
-            actions.append(
-                f"ALERT {symbol}: NO STOP and none in journal — needs manual attention"
-            )
-            continue
-
-        # Clear whatever partial protection is resting before replacing it.
-        # Adding an OCO pair on top of a surviving lone stop would leave two
-        # stops against one position: they do not merely exit it, the second
-        # fill opens a position the other way.
-        stuck = []
-        for o in exits:
-            try:
-                tc.cancel_order_by_id(str(o.id))
-            except Exception as exc:  # noqa: BLE001
-                stuck.append(str(o.id))
-                print(f"[exit] cancel resting exit {symbol} {o.id}: {exc}")
-
-        if stuck:
-            actions.append(
-                f"WARNING {symbol}: could not clear resting order(s) {', '.join(stuck)} "
-                "— not adding more protection on top"
-            )
-            continue
-
-        # Alpaca keeps the shares reserved until a cancel actually settles, so
-        # submitting straight away is rejected for insufficient quantity
-        # (2026-08-18: HPE's stop was cancelled, the replacement bounced, and
-        # the position sat naked overnight — worse than before the audit ran).
-        # Wait for the release, and if the pair still will not go on, put the
-        # plain stop back. Never leave a position less protected than found.
-        _await_release(tc, [str(o.id) for o in exits])
-        outcome = _restore_protection(
-            tc, symbol, pos_qty, is_short, stop_price, target_price
-        )
-        if outcome == "oco":
-            actions.append(
-                f"PROTECTION RE-ATTACHED {symbol}: {'+'.join(missing)} missing, "
-                f"OCO stop {stop_price} / target {target_price} on {pos_qty} shares"
-            )
-        elif outcome == "stop":
-            actions.append(
-                f"STOP RE-ATTACHED {symbol} @ {stop_price} — OCO pair was rejected, "
-                "fell back to a bare stop (no target); will retry tomorrow"
-            )
-        else:
-            actions.append(
-                f"ALERT {symbol}: UNPROTECTED — could not attach a stop "
-                f"({outcome}) — needs manual attention"
-            )
-        continue
-
+        try:
+            _audit_position(tc, p, orders, now_et, actions)
+        except Exception as exc:  # noqa: BLE001 — one bad position must not sink the run
+            sym = getattr(p, "symbol", "?")
+            print(f"[exit] {sym}: checks failed: {exc}")
+            actions.append(f"ALERT {sym}: exit checks failed ({exc}) — check it manually")
     return actions
+
+
+def _audit_position(tc, p, orders, now_et: datetime, actions: list[str]) -> None:
+    """Every check for one open position: time stop, earnings exit,
+    protection audit. exit_checks wraps each call, so a failure here can
+    neither stop the other positions being handled nor erase their records
+    (2026-11-04: an uncaught error on TSM aborted the run after NVDA had
+    already been closed, and NVDA's close was never journaled)."""
+    symbol = p.symbol
+    is_short = float(p.qty) < 0
+    live = [
+        o for o in orders
+        if o.symbol == symbol and _val(o.status) in ACTIVE_STATUSES
+    ]
+    entry_rec = journal.last_order_for(symbol)
+
+    def close_out(reason: str) -> None:
+        _close_out(tc, p, live, entry_rec, reason, now_et, actions)
+
+    # --- time stop ---------------------------------------------------
+    # Shorts get a shorter leash: bear-market rallies are violent.
+    max_hold = config.SHORT_MAX_HOLD_DAYS if is_short else config.MAX_HOLD_DAYS
+    held = None
+    if entry_rec and entry_rec.get("signal_date"):
+        held = _trading_days_held(
+            date.fromisoformat(entry_rec["signal_date"]), now_et.date()
+        )
+        if held >= max_hold:
+            close_out(
+                f"TIME EXIT {symbol}{' (short)' if is_short else ''}: "
+                f"held {held} trading days (max {max_hold}), closed at market"
+            )
+            return
+    else:
+        actions.append(f"WARNING {symbol}: no journal entry — age unknown, time stop skipped")
+
+    # --- earnings exit -------------------------------------------------
+    # The entry gates stop us opening near a report, but a hold can still
+    # run into one. Being flat is the only defence against a gap, which
+    # opens through a stop rather than at it.
+    ted = None
+    if config.EXIT_BEFORE_EARNINGS:
+        ted = trading_days_to_earnings(symbol, now_et.date())
+        if ted is None:
+            # Deliberately do NOT flatten on an unknown date: closing a
+            # working position every time a scrape hiccups is worse than
+            # the residual risk the entry gate already screens for.
+            actions.append(
+                f"WARNING {symbol}: earnings date unknown — cannot verify, holding"
+            )
+        elif ted <= config.EXIT_BEFORE_EARNINGS_DAYS:
+            close_out(
+                f"EARNINGS EXIT {symbol}{' (short)' if is_short else ''}: "
+                f"reports in {ted} session(s), closed at market"
+            )
+            return
+
+    # --- protection audit -----------------------------------------------
+    # A long is protected by a SELL stop below and a SELL limit above; a
+    # short by the mirror. Both legs matter: without the target the 1.5:1
+    # reward:risk the rules engine sized for simply does not exist.
+    protect_side = "buy" if is_short else "sell"
+    exits = [o for o in live if _val(o.side) == protect_side]
+    has_stop = any("stop" in _val(o.type or o.order_type) for o in exits)
+    has_target = any("limit" in _val(o.type or o.order_type) for o in exits)
+
+    if has_stop and has_target:
+        # Nothing needed doing — say so anyway. A silent exit run reads
+        # identically whether a position is healthy or was never looked
+        # at, which is no use to anyone reading it at 2:15 AM.
+        actions.append(_holding_status(p, symbol, is_short, held, max_hold, ted))
+        return
+
+    pos_qty = abs(int(float(p.qty)))
+    stop_price = (entry_rec or {}).get("stop")
+    target_price = (entry_rec or {}).get("target")
+    missing = ([] if has_stop else ["stop"]) + ([] if has_target else ["target"])
+
+    if not stop_price:
+        actions.append(
+            f"ALERT {symbol}: NO STOP and none in journal — needs manual attention"
+        )
+        return
+
+    # Clear whatever partial protection is resting before replacing it.
+    # Adding an OCO pair on top of a surviving lone stop would leave two
+    # stops against one position: they do not merely exit it, the second
+    # fill opens a position the other way.
+    stuck = []
+    for o in exits:
+        try:
+            tc.cancel_order_by_id(str(o.id))
+        except Exception as exc:  # noqa: BLE001
+            stuck.append(str(o.id))
+            print(f"[exit] cancel resting exit {symbol} {o.id}: {exc}")
+
+    if stuck:
+        actions.append(
+            f"WARNING {symbol}: could not clear resting order(s) {', '.join(stuck)} "
+            "— not adding more protection on top"
+        )
+        return
+
+    # Alpaca keeps the shares reserved until a cancel actually settles, so
+    # submitting straight away is rejected for insufficient quantity
+    # (2026-08-18: HPE's stop was cancelled, the replacement bounced, and
+    # the position sat naked overnight — worse than before the audit ran).
+    # Wait for the release, and if the pair still will not go on, put the
+    # plain stop back. Never leave a position less protected than found.
+    _await_release(tc, [str(o.id) for o in exits])
+    outcome = _restore_protection(
+        tc, symbol, pos_qty, is_short, stop_price, target_price
+    )
+    if outcome == "oco":
+        actions.append(
+            f"PROTECTION RE-ATTACHED {symbol}: {'+'.join(missing)} missing, "
+            f"OCO stop {stop_price} / target {target_price} on {pos_qty} shares"
+        )
+    elif outcome == "stop":
+        actions.append(
+            f"STOP RE-ATTACHED {symbol} @ {stop_price} — OCO pair was rejected, "
+            "fell back to a bare stop (no target); will retry tomorrow"
+        )
+    else:
+        actions.append(
+            f"ALERT {symbol}: UNPROTECTED — could not attach a stop "
+            f"({outcome}) — needs manual attention"
+        )
+    return
+
+
+
+def _still_held(tc, symbol: str):
+    """True if the broker still shows the position, False if it is gone,
+    None if that cannot be determined."""
+    try:
+        pos = tc.get_open_position(symbol)
+        return abs(float(pos.qty)) > 0
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc).lower()
+        if "position does not exist" in msg or "40410000" in msg or "not found" in msg:
+            return False
+        print(f"[exit] could not confirm {symbol} position: {exc}")
+        return None
+
+
+def _close_out(tc, p, live, entry_rec, reason: str, now_et: datetime, actions: list[str]) -> bool:
+    """Flatten one position: cancel its resting legs, wait for the broker to
+    release the shares, then close at market. Returns True once it is flat.
+
+    2026-11-04: this used to cancel and close in the same breath. Alpaca was
+    still holding TSM's shares for the orders being cancelled, refused the
+    buy-back, and the uncaught error crashed the whole exit run: TSM sat with
+    no stop or target for 75 minutes until a fallback run closed it, and
+    NVDA's close earlier in that same run was never journaled. Now the close
+    waits for the release and retries, every close is journaled the moment it
+    happens, and if the position still will not close it gets its protection
+    back instead of being left naked.
+    """
+    symbol = p.symbol
+    is_short = float(p.qty) < 0
+    side = "short" if is_short else "long"
+
+    stuck = []
+    for o in live:
+        try:
+            tc.cancel_order_by_id(str(o.id))
+        except Exception as exc:  # noqa: BLE001
+            stuck.append(str(o.id))
+            print(f"[exit] cancel {symbol} {o.id}: {exc}")
+    _await_release(tc, [str(o.id) for o in live if str(o.id) not in stuck])
+
+    def flat() -> bool:
+        journal.log("position_closed", date=now_et.date().isoformat(),
+                    symbol=symbol, side=side, reason=reason)
+        actions.append(reason)
+        return True
+
+    last = ""
+    for attempt in range(3):
+        try:
+            tc.close_position(symbol)
+            return flat()
+        except Exception as exc:  # noqa: BLE001
+            last = str(exc)
+            print(f"[exit] {symbol} close attempt {attempt + 1} failed: {exc}")
+            if _still_held(tc, symbol) is False:
+                return flat()  # the close went through despite the error
+            time_mod.sleep(2.0)
+
+    # Could not flatten. Never leave the position less protected than found.
+    if stuck:
+        actions.append(
+            f"ALERT {symbol}: could not close ({last}); its original stop/target "
+            "could not be cancelled either, so they are still resting — check it manually"
+        )
+        return False
+    if _still_held(tc, symbol) is None:
+        actions.append(
+            f"ALERT {symbol}: could not close ({last}) and could not confirm whether "
+            "the position still exists — check it manually"
+        )
+        return False
+    stop_price = (entry_rec or {}).get("stop")
+    target_price = (entry_rec or {}).get("target")
+    if not stop_price:
+        actions.append(
+            f"ALERT {symbol}: UNPROTECTED — could not close ({last}) and no stop in "
+            "the journal to restore — needs manual attention"
+        )
+        return False
+    outcome = _restore_protection(
+        tc, symbol, abs(int(float(p.qty))), is_short, stop_price, target_price
+    )
+    if outcome in ("oco", "stop"):
+        kept = "stop and target" if outcome == "oco" else "stop only"
+        actions.append(
+            f"ALERT {symbol}: wanted to close ({reason.split(':')[0]}) but the close was "
+            f"rejected ({last}); {kept} restored, will retry next run"
+        )
+    else:
+        actions.append(
+            f"ALERT {symbol}: UNPROTECTED — close rejected ({last}) and protection "
+            f"could not be restored ({outcome}) — needs manual attention"
+        )
+    return False
 
 
 def _await_release(tc, order_ids, timeout_s: float = 20.0) -> None:

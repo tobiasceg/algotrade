@@ -21,6 +21,11 @@ NOW = datetime(2026, 8, 5, 14, 15, tzinfo=ET)
 # waiting, and the fake client settles cancels instantly.
 broker.time_mod.sleep = lambda seconds: None
 
+# Closes are journaled the moment they happen; capture them instead of
+# writing into the real journal.jsonl.
+LOGGED = []
+journal.log = lambda event, **kw: LOGGED.append({"event": event, **kw})
+
 
 class Position:
     def __init__(self, symbol, qty, avg_entry_price=194.10, current_price=195.51,
@@ -66,8 +71,21 @@ class FakeClient:
             raise RuntimeError(f"cannot cancel {order_id}")
         self.cancelled.append(order_id)
 
+    # Number of leading close_position calls to reject, like Alpaca does while
+    # the shares are still reserved for orders being cancelled.
+    close_fails = 0
+
     def close_position(self, symbol):
+        if self.close_fails > 0:
+            self.close_fails -= 1
+            raise RuntimeError("insufficient qty available for order (requested: 11, available: 0)")
         self.closed.append(symbol)
+
+    def get_open_position(self, symbol):
+        for p in self._positions:
+            if p.symbol == symbol and symbol not in self.closed:
+                return p
+        raise RuntimeError('{"code":40410000,"message":"position does not exist"}')
 
     # Number of leading submit_order calls to reject, and with what.
     reject_submits = 0
@@ -95,6 +113,69 @@ def setup(entry_days_ago=1, earnings_in=None, orders=()):
     journal.last_order_for = lambda symbol: {
         "signal_date": signal, "stop": 100.0, "target": 220.0,
     }
+    LOGGED.clear()
+
+
+def test_time_exit_survives_the_cancel_race():
+    # The live 2026-11-04 crash: legs cancelled, the buy-back rejected while
+    # the broker still reserved the shares. It must wait and retry.
+    setup(entry_days_ago=10, earnings_in=30, orders=protection("TSM", qty=11, side="buy"))
+    tc = FakeClient([Position("TSM", -11)])
+    tc.close_fails = 1
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.closed == ["TSM"], actions
+    assert any("TIME EXIT TSM (short)" in a for a in actions), actions
+
+
+def test_close_that_keeps_failing_restores_protection_instead_of_crashing():
+    setup(entry_days_ago=10, earnings_in=30, orders=protection("TSM", qty=11, side="buy"))
+    tc = FakeClient([Position("TSM", -11)])
+    tc.close_fails = 99
+    actions = broker.exit_checks(tc, NOW)          # must not raise
+    assert tc.closed == []
+    assert sorted(tc.cancelled) == ["stop-1", "tgt-1"]
+    assert len(tc.submitted) == 1, "the cancelled legs must be put back"
+    assert any("stop and target restored" in a for a in actions), actions
+    assert not any(e["event"] == "position_closed" for e in LOGGED)
+
+
+def test_every_close_is_journaled_the_moment_it_happens():
+    # A later crash in the same run must not be able to erase a close.
+    setup(entry_days_ago=10, earnings_in=30)
+    tc = FakeClient([Position("NVDA", -23), Position("TSM", -11)])
+    broker.exit_checks(tc, NOW)
+    closed = [e["symbol"] for e in LOGGED if e["event"] == "position_closed"]
+    assert closed == ["NVDA", "TSM"], LOGGED
+    assert all(e["side"] == "short" and "TIME EXIT" in e["reason"] for e in LOGGED)
+
+
+def test_one_bad_position_does_not_stop_the_others():
+    # On Nov 4 the crash on TSM meant nothing after it was handled.
+    class Broken:
+        symbol, qty = "BAD", "not-a-number"
+
+    setup(entry_days_ago=10, earnings_in=30)
+    tc = FakeClient([Broken(), Position("TSM", -11)])
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.closed == ["TSM"], actions
+    assert any(a.startswith("ALERT BAD: exit checks failed") for a in actions), actions
+
+
+def test_close_reported_as_failed_but_actually_done_counts_as_flat():
+    # If the broker errors yet the position is gone, do not re-protect it:
+    # a stop on a flat position would open a new one when it triggers.
+    setup(entry_days_ago=10, earnings_in=30)
+    tc = FakeClient([Position("TSM", -11)])
+    real = tc.close_position
+
+    def close_then_error(symbol):
+        real(symbol)
+        raise RuntimeError("timeout")
+
+    tc.close_position = close_then_error
+    actions = broker.exit_checks(tc, NOW)
+    assert tc.submitted == [], "no protection on a position that is already flat"
+    assert any("TIME EXIT TSM" in a for a in actions), actions
 
 
 def test_earnings_exit_closes_the_position():
