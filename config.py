@@ -33,12 +33,22 @@ ATR_LOOKBACK = 14        # average true range, for stops/targets
 HISTORY_PERIOD = "6mo"   # how much daily history to download
 
 # Entry rules (step 3)
-VOL_SURGE_MIN = 1.5          # breakout volume must be >= this x 20-day average
+VOL_SURGE_MIN = 1.0          # breakout volume must be >= this x 20-day average
 MAX_BREAKOUT_EXT_PCT = 5.0   # skip if close is more than this % above the
                              # 20-day high — a huge gap has already spent the
                              # move, and chasing it wrecks the reward:risk
-STOP_ATR_MULT = 2.0          # stop  = close - 2.0 * ATR
-TARGET_ATR_MULT = 6.0        # target = close + 6.0 * ATR  (3:1 reward:risk)
+STOP_ATR_MULT = 2.5          # stop  = close - 2.5 * ATR
+TARGET_ATR_MULT = 6.0        # target = close + 6.0 * ATR  (2.4:1 reward:risk)
+# Stop and volume floor changed Nov 19 2026 (were 2.0 ATR and 1.5x). A
+# portfolio-level replay, Sep 2024 - Nov 2026, with cash, the daily cap, the
+# cash floor and gap-through-stop fills: the 2-ATR stop was knocked out by
+# ordinary noise (2.5 or 3.0 beat it in all 6 sizing/volume combinations and
+# in both halves; win rate ~50% -> ~57%), and the 1.5x volume floor carried
+# no information while halving the trade count (1.0x beat it in all 9). The
+# live rules made +0.7% over the last 12 months of that replay; with both
+# changes, +12.9%, against QQQ +9.3%. Full period +71% vs +36%, max drawdown
+# -17% vs -12%. Neither change helps Aug-Nov 2026, which every variant lost.
+# Watchlist chosen with hindsight in Jul 2026, so absolute levels flatter.
 # Was 3.0 with a 5-day hold. A 2-year replay of these exact entries (Sep 11
 # 2026) showed the 3-ATR target was reached on only 8% of trades inside 5
 # sessions, so the typical winner was cut by the clock at +1.75% while the
@@ -106,6 +116,10 @@ SHORT_MAX_HOLD_DAYS = 3         # bear rallies are violent; a short that is
 SHORT_TARGET_ATR_MULT = 3.0     # shorts keep the original 3-ATR target: the
                                 # Sep 11 replay covered the long book only,
                                 # and a 3-day hold cannot reach 6 ATR anyway
+SHORT_STOP_ATR_MULT = 2.0       # shorts keep their original stop and volume
+SHORT_VOL_SURGE_MIN = 1.5       # floor too: the Nov 19 replay that widened
+                                # the long stop and lowered the long volume
+                                # floor tested the long book only
 
 # Claude veto layer (step 4)
 VETO_MODEL = "claude-opus-4-8"

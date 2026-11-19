@@ -4,7 +4,8 @@ Reads the daily JSON snapshot and applies the entry criteria:
 
   1. Market regime: benchmark (QQQ) must be above its 50-day MA.
   2. Breakout: yesterday's close above the prior 20-day high.
-  3. Conviction: breakout volume >= 1.5x the 20-day average.
+  3. Conviction: breakout volume >= VOL_SURGE_MIN x the 20-day average
+     (1.0x since Nov 2026: in replay a higher floor only cut the trade count).
   4. Not extended: close no more than 5% above the 20-day high
      (a huge gap has already spent the move — chasing it ruins reward:risk).
   5. Own trend: the name itself above its 50-day MA. The index gate cannot

@@ -43,6 +43,16 @@ mechanical (bracket orders + time stop) because they run while nobody is watchin
 - **Timing probes live since Jul 11:** crons now fire 7 days/week; on market-closed
   days each firing logs `timing_probe` (slot, actual time, lag minutes) to the journal
   instead of exiting silently — building the lag/drop dataset for the scheduler decision.
+- **Long stop widened to 2.5 ATR and volume floor lowered to 1.0x, Nov 19.** A
+  portfolio-level replay (Sep 2024 – Nov 2026: cash, daily cap, cash floor, gap fills)
+  showed the live long rules made **+0.7% over the last 12 months** vs QQQ +9.3%. The
+  2-ATR stop was knocked out by noise (2.5/3.0 ATR better in all 6 combinations, both
+  halves; win ~50% → ~57%) and the 1.5x volume floor carried no information while halving
+  trades (1.0x better in all 9). Both together: full period +71% vs +36%, max dd −17% vs
+  −12%, last 12 months +12.9%. Volatility-based sizing was tested and **rejected**: same
+  return/drawdown at every risk level, it only scales both. No variant helps Aug–Nov
+  2026 (all lose; 2 winners in 13 trades). Short book keeps 2.0 ATR / 1.5x via
+  `SHORT_STOP_ATR_MULT` / `SHORT_VOL_SURGE_MIN` — untested for shorts.
 - **Exit-pass crash fixed Nov 13.** On Nov 4 the time-exit code cancelled TSM's stop
   and target and immediately tried to buy the shares back; Alpaca still had them
   reserved for the orders being cancelled, rejected it, and the uncaught error crashed

@@ -54,8 +54,17 @@ def test_no_breakout_no_candidate():
 
 
 def test_weak_volume_rejected():
-    t = make_ticker(vol_ratio=1.2)
+    t = make_ticker(vol_ratio=0.8)   # below the 1.0x floor
     assert rules.generate_candidates(make_snapshot({"VRT": t})) == []
+
+
+def test_ordinary_volume_breakout_now_qualifies():
+    # Nov 2026: the 1.5x floor carried no information in replay and halved the
+    # trade count. A breakout on 1.2x average volume is now a candidate, and
+    # its stop sits 2.5 ATR below the close.
+    t = make_ticker(vol_ratio=1.2)
+    (c,) = rules.generate_candidates(make_snapshot({"VRT": t}))
+    assert c["stop"] == round(142.10 - 2.5 * 3.15, 2)
 
 
 def test_overextended_gap_rejected():
@@ -103,7 +112,7 @@ def test_breakout_report_names_the_real_gate():
     snap = make_snapshot(
         {
             "ANET": make_ticker(trading_days_to_earnings=0),   # earnings
-            "AVGO": make_ticker(vol_ratio=1.46),               # volume
+            "AVGO": make_ticker(vol_ratio=0.9),                # volume
             "NVDA": make_ticker(ma50=150.0),                   # own downtrend
             "MU": make_ticker(close=139.0, pct_above_high_20d=-1.0),  # no breakout
         }

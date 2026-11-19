@@ -10,7 +10,8 @@ Entry criteria (all must hold on the signal bar):
   1. Regime: benchmark (QQQ) at least SHORT_REGIME_BUFFER_PCT below its
      50-day MA — hysteresis so the first wobble under the MA is not shorted.
   2. Breakdown: close below the prior 20-day low.
-  3. Conviction: volume >= 1.5x the 20-day average (same as the long side).
+  3. Conviction: volume >= 1.5x the 20-day average (SHORT_VOL_SURGE_MIN;
+     the long side was lowered to 1.0x, untested for shorts).
   4. Not extended: close no more than 4% below the 20-day low — down moves
      overshoot and snap back harder than up moves, so tighter than the
      long side's 5%.
@@ -62,7 +63,7 @@ def blocking_gate(t: dict) -> str | None:
     if any(t.get(k) is None for k in required):
         return GATE_DATA
 
-    if t["vol_ratio"] < config.VOL_SURGE_MIN:
+    if t["vol_ratio"] < config.SHORT_VOL_SURGE_MIN:
         return GATE_VOLUME
 
     pct_below = t.get("pct_below_low_20d")
@@ -149,7 +150,7 @@ def generate_candidates(snapshot: dict) -> list[dict]:
         if pct_below is None:
             pct_below = round((1 - t["close"] / t["low_20d"]) * 100, 2)
         crash_pct = round((1 - t["close"] / t["high_20d"]) * 100, 2)
-        stop = round(t["close"] + config.STOP_ATR_MULT * t["atr14"], 2)
+        stop = round(t["close"] + config.SHORT_STOP_ATR_MULT * t["atr14"], 2)
         target = round(t["close"] - config.SHORT_TARGET_ATR_MULT * t["atr14"], 2)
 
         candidates.append(
@@ -167,7 +168,7 @@ def generate_candidates(snapshot: dict) -> list[dict]:
                 "crash_from_high_pct": crash_pct,
                 "risk_per_share": round(stop - t["close"], 2),
                 "reward_risk": round(
-                    config.SHORT_TARGET_ATR_MULT / config.STOP_ATR_MULT, 2
+                    config.SHORT_TARGET_ATR_MULT / config.SHORT_STOP_ATR_MULT, 2
                 ),
                 "reason": (
                     f"closed below 20-day low ({t['low_20d']}) at {t['close']} "
